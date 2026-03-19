@@ -33,6 +33,31 @@ def _log(task_id: str, msg: str):
     print(entry)
 
 
+def _auto_upload_cpa(task_id: str, account):
+    """注册成功后自动上传 CPA（仅 chatgpt 平台，且已配置时）"""
+    if getattr(account, "platform", "") != "chatgpt":
+        return
+    try:
+        from core.config_store import config_store
+        cpa_url = config_store.get("cpa_api_url", "")
+        if cpa_url:
+            from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_cpa
+
+            class _A: pass
+            a = _A()
+            a.email = account.email
+            extra = account.extra or {}
+            a.access_token = extra.get("access_token") or account.token
+            a.refresh_token = extra.get("refresh_token", "")
+            a.id_token = extra.get("id_token", "")
+
+            token_data = generate_token_json(a)
+            ok, msg = upload_to_cpa(token_data)
+            _log(task_id, f"  [CPA] {'✓ ' + msg if ok else '✗ ' + msg}")
+    except Exception as e:
+        _log(task_id, f"  [CPA] 自动上传异常: {e}")
+
+
 def _run_register(task_id: str, req: RegisterTaskRequest):
     from core.registry import get
     from core.base_platform import RegisterConfig
@@ -83,6 +108,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 save_account(account)
                 if _proxy: proxy_pool.report_success(_proxy)
                 _log(task_id, f"✓ 注册成功: {account.email}")
+                _auto_upload_cpa(task_id, account)
                 return True
             except Exception as e:
                 if _proxy: proxy_pool.report_fail(_proxy)

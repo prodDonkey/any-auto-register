@@ -51,3 +51,49 @@ class TraePlatform(BasePlatform):
 
     def check_valid(self, account: Account) -> bool:
         return bool(account.token)
+
+    def get_platform_actions(self) -> list:
+        """返回平台支持的操作列表"""
+        return [
+            {"id": "switch_account", "label": "切换到桌面应用", "params": []},
+            {"id": "get_user_info", "label": "获取用户信息", "params": []},
+        ]
+
+    def execute_action(self, action_id: str, account: Account, params: dict) -> dict:
+        """执行平台操作"""
+        if action_id == "switch_account":
+            from platforms.trae.switch import switch_trae_account, restart_trae_ide
+            
+            token = account.token
+            user_id = account.user_id or ""
+            email = account.email or ""
+            region = account.region or ""
+            
+            if not token:
+                return {"ok": False, "error": "账号缺少 token"}
+            
+            ok, msg = switch_trae_account(token, user_id, email, region)
+            if not ok:
+                return {"ok": False, "error": msg}
+            
+            restart_ok, restart_msg = restart_trae_ide()
+            return {
+                "ok": True,
+                "data": {
+                    "message": f"{msg}。{restart_msg}" if restart_ok else msg,
+                }
+            }
+        
+        elif action_id == "get_user_info":
+            from platforms.trae.switch import get_trae_user_info
+            
+            token = account.token
+            if not token:
+                return {"ok": False, "error": "账号缺少 token"}
+            
+            user_info = get_trae_user_info(token)
+            if user_info:
+                return {"ok": True, "data": user_info}
+            return {"ok": False, "error": "获取用户信息失败"}
+        
+        raise NotImplementedError(f"未知操作: {action_id}")
