@@ -15,6 +15,7 @@ CONFIG_KEYS = [
     "cfworker_api_url", "cfworker_admin_token", "cfworker_domain", "cfworker_fingerprint",
     "cpa_api_url", "cpa_api_key",
     "team_manager_url", "team_manager_key",
+    "sub2api_sync_url", "sub2api_base_url", "sub2api_bearer_token",
 ]
 
 

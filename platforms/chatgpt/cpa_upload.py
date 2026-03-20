@@ -1,5 +1,9 @@
 """
-CPA (Codex Protocol API) 上传功能
+ChatGPT 账号上传功能。
+
+- CPA
+- Team Manager
+- Sub2Api Sync HTTP
 """
 
 import json
@@ -194,6 +198,85 @@ def upload_to_team_manager(
         return False, error_msg
     except Exception as e:
         logger.error(f"Team Manager 上传异常: {e}")
+        return False, f"上传异常: {str(e)}"
+
+
+def upload_to_sub2api_http_sync(
+    token_data: dict,
+    sync_url: str = None,
+    base_url: str = None,
+    bearer_token: str = None,
+) -> Tuple[bool, str]:
+    """通过独立 Sub2Api Sync HTTP 服务上传账号。
+
+    默认调用 POST {sync_url}/sync，token_data 直接作为 token_data 传入。
+    sync_url / base_url / bearer_token 为空时自动从 ConfigStore 读取。
+    """
+    if not sync_url:
+        sync_url = _get_config_value("sub2api_sync_url")
+    if not base_url:
+        base_url = _get_config_value("sub2api_base_url")
+    if not bearer_token:
+        bearer_token = _get_config_value("sub2api_bearer_token")
+
+    sync_url = (sync_url or "").strip()
+    base_url = (base_url or "").strip()
+    bearer_token = (bearer_token or "").strip()
+
+    if not sync_url:
+        return False, "Sub2Api Sync URL 未配置"
+
+    url = sync_url.rstrip("/")
+    if not url.endswith("/sync"):
+        url = url + "/sync"
+
+    payload = {
+        "token_data": token_data,
+        "base_url": base_url,
+        "bearer": bearer_token,
+        "check_before": True,
+        "check_after": True,
+    }
+    if not base_url:
+        payload.pop("base_url")
+    if not bearer_token:
+        payload.pop("bearer")
+
+    try:
+        request_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        resp = cffi_requests.post(
+            url,
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            data=request_body,
+            proxies=None,
+            verify=False,
+            timeout=30,
+            impersonate="chrome110",
+        )
+        body_text = resp.text[:400]
+        data = {}
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+
+        if resp.status_code in (200, 201) and bool(data.get("ok")):
+            result = data.get("result") if isinstance(data.get("result"), dict) else {}
+            reason = str(result.get("reason") or "")
+            if reason == "updated_existing_before_create":
+                return True, f"Sub2Api 已更新现有账号 id={result.get('existing_id')}"
+            if result.get("skipped"):
+                return True, "Sub2Api 已存在该账号，已跳过"
+            return True, "Sub2Api 同步成功"
+
+        detail = ""
+        if isinstance(data, dict):
+            detail = str(data.get("detail") or data.get("message") or body_text)
+        else:
+            detail = body_text
+        return False, f"Sub2Api 同步失败: HTTP {resp.status_code} - {detail}"
+    except Exception as e:
+        logger.error(f"Sub2Api Sync 上传异常: {e}")
         return False, f"上传异常: {str(e)}"
 
 

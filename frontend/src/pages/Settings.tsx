@@ -119,6 +119,14 @@ const TABS = [
         { key: 'team_manager_url', label: 'API URL', placeholder: 'https://your-tm.example.com' },
         { key: 'team_manager_key', label: 'API Key', secret: true },
       ],
+    }, {
+      section: 'Sub2Api',
+      desc: '注册完成后调用独立 Sync 服务上传到 Sub2Api',
+      items: [
+        { key: 'sub2api_sync_url', label: 'Sync URL', placeholder: 'http://127.0.0.1:18521/sync' },
+        { key: 'sub2api_base_url', label: 'Sub2Api URL', placeholder: 'http://106.53.27.215:8080' },
+        { key: 'sub2api_bearer_token', label: 'Bearer Token', secret: true },
+      ],
     }],
   },
 ]

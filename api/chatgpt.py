@@ -18,6 +18,9 @@ class UploadRequest(BaseModel):
     cpa_api_token: Optional[str] = None
     team_manager_url: Optional[str] = None
     team_manager_key: Optional[str] = None
+    sub2api_sync_url: Optional[str] = None
+    sub2api_base_url: Optional[str] = None
+    sub2api_bearer_token: Optional[str] = None
 
 
 def _get_account(account_id: int, session: Session) -> AccountModel:
@@ -133,4 +136,27 @@ def upload_cpa(account_id: int, req: CpaUploadReq,
     from platforms.chatgpt.cpa_upload import upload_to_cpa, generate_token_json
     token_data = generate_token_json(codex_acc)
     ok, msg = upload_to_cpa(token_data, api_url=req.api_url, api_key=req.api_key)
+    return {"ok": ok, "message": msg}
+
+
+class Sub2ApiUploadReq(BaseModel):
+    sync_url: str
+    base_url: str = ""
+    bearer_token: str = ""
+
+
+@router.post("/{account_id}/upload-sub2api")
+def upload_sub2api(account_id: int, req: Sub2ApiUploadReq,
+                   session: Session = Depends(get_session)):
+    acc = _get_account(account_id, session)
+    codex_acc = _to_codex_account(acc)
+
+    from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_sub2api_http_sync
+    token_data = generate_token_json(codex_acc)
+    ok, msg = upload_to_sub2api_http_sync(
+        token_data,
+        sync_url=req.sync_url,
+        base_url=req.base_url,
+        bearer_token=req.bearer_token,
+    )
     return {"ok": ok, "message": msg}

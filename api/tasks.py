@@ -94,6 +94,33 @@ def _auto_upload_cpa(task_id: str, account):
         _log(task_id, f"  [CPA] 自动上传异常: {e}")
 
 
+def _auto_upload_sub2api(task_id: str, account):
+    """注册成功后自动上传 Sub2Api（仅 chatgpt 平台，且已配置时）。"""
+    if getattr(account, "platform", "") != "chatgpt":
+        return
+    try:
+        from core.config_store import config_store
+        sync_url = config_store.get("sub2api_sync_url", "")
+        if sync_url:
+            from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_sub2api_http_sync
+
+            class _A:
+                pass
+
+            a = _A()
+            a.email = account.email
+            extra = account.extra or {}
+            a.access_token = extra.get("access_token") or account.token
+            a.refresh_token = extra.get("refresh_token", "")
+            a.id_token = extra.get("id_token", "")
+
+            token_data = generate_token_json(a)
+            ok, msg = upload_to_sub2api_http_sync(token_data)
+            _log(task_id, f"  [Sub2Api] {'✓ ' + msg if ok else '✗ ' + msg}")
+    except Exception as e:
+        _log(task_id, f"  [Sub2Api] 自动上传异常: {e}")
+
+
 def _save_local_token_json(task_id: str, account):
     """注册成功后导出本地 token JSON（仅 chatgpt 平台）。"""
     if getattr(account, "platform", "") != "chatgpt":
@@ -177,6 +204,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 _log(task_id, f"✓ 注册成功: {account.email}")
                 _save_task_log(req.platform, account.email, "success")
                 _auto_upload_cpa(task_id, account)
+                _auto_upload_sub2api(task_id, account)
                 cashier_url = (account.extra or {}).get("cashier_url", "")
                 if cashier_url:
                     _log(task_id, f"  [升级链接] {cashier_url}")

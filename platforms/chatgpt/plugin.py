@@ -124,6 +124,12 @@ class ChatGPTPlatform(BasePlatform):
                  {"key": "api_url", "label": "TM API URL", "type": "text"},
                  {"key": "api_key", "label": "TM API Key", "type": "text"},
              ]},
+            {"id": "upload_sub2api", "label": "上传 Sub2Api",
+             "params": [
+                 {"key": "sync_url", "label": "Sync URL", "type": "text"},
+                 {"key": "base_url", "label": "Sub2Api Base URL", "type": "text"},
+                 {"key": "bearer_token", "label": "Bearer Token", "type": "text"},
+             ]},
         ]
 
     def execute_action(self, action_id: str, account: Account, params: dict) -> dict:
@@ -170,6 +176,17 @@ class ChatGPTPlatform(BasePlatform):
             from platforms.chatgpt.cpa_upload import upload_to_team_manager
             ok, msg = upload_to_team_manager(a, api_url=params.get("api_url"),
                                              api_key=params.get("api_key"))
+            return {"ok": ok, "data": msg}
+
+        elif action_id == "upload_sub2api":
+            from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_sub2api_http_sync
+            token_data = generate_token_json(a)
+            ok, msg = upload_to_sub2api_http_sync(
+                token_data,
+                sync_url=params.get("sync_url"),
+                base_url=params.get("base_url"),
+                bearer_token=params.get("bearer_token"),
+            )
             return {"ok": ok, "data": msg}
 
         raise NotImplementedError(f"未知操作: {action_id}")
