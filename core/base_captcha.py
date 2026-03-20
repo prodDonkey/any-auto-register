@@ -57,7 +57,7 @@ class ManualCaptcha(BaseCaptcha):
 class LocalSolverCaptcha(BaseCaptcha):
     """调用本地 api_solver 服务解 Turnstile（Camoufox/patchright）"""
 
-    def __init__(self, solver_url: str = "http://localhost:8888"):
+    def __init__(self, solver_url: str = "http://127.0.0.1:8889"):
         self.solver_url = solver_url.rstrip("/")
 
     def solve_turnstile(self, page_url: str, site_key: str) -> str:
@@ -96,7 +96,7 @@ class LocalSolverCaptcha(BaseCaptcha):
 
     @staticmethod
     def start_solver(headless: bool = True, browser_type: str = "camoufox",
-                     port: int = 8888) -> None:
+                     port: int = 8889) -> None:
         """在后台线程启动本地 solver 服务"""
         import subprocess, sys, os
         solver_path = os.path.join(

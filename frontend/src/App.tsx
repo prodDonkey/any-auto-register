@@ -6,7 +6,7 @@ import Register from '@/pages/Register'
 import Proxies from '@/pages/Proxies'
 import Settings from '@/pages/Settings'
 import TaskHistory from '@/pages/TaskHistory'
-import { LayoutDashboard, Users, Globe, History,
+import { LayoutDashboard, Users, Globe, History, PlusCircle,
          Settings as SettingsIcon, Sun, Moon, ChevronDown, ChevronRight } from 'lucide-react'
 
 const PLATFORMS = [
@@ -70,6 +70,7 @@ const NAV_TOP = [
   { path: '/', label: '仪表盘', icon: LayoutDashboard },
 ]
 const NAV_BOTTOM = [
+  { path: '/register', label: '注册任务', icon: PlusCircle },
   { path: '/history',  label: '任务历史', icon: History },
   { path: '/proxies',  label: '代理管理', icon: Globe },
   { path: '/settings', label: '全局配置', icon: SettingsIcon },

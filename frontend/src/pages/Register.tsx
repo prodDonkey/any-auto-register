@@ -23,7 +23,7 @@ export default function Register() {
     cfworker_domain: '',
     cfworker_fingerprint: '',
     yescaptcha_key: '',
-    solver_url: 'http://localhost:8888',
+    solver_url: 'http://127.0.0.1:8889',
   })
   const [task, setTask] = useState<any>(null)
   const [polling, setPolling] = useState(false)
@@ -152,7 +152,7 @@ export default function Register() {
           <CardHeader><CardTitle>本地 Solver 配置</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <Input label="Solver URL" k="solver_url" />
-            <p className="text-xs text-[var(--text-muted)]">启动命令: python services/turnstile_solver/start.py --headless --browser-type camoufox</p>
+            <p className="text-xs text-[var(--text-muted)]">启动命令: .venv/bin/python3 services/turnstile_solver/start.py --browser_type camoufox</p>
           </CardContent>
         </Card>
       )}

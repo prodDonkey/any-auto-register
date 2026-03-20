@@ -1,6 +1,7 @@
 """OpenAI 专用 HTTP 客户端"""
 from core.http_client import HTTPClient, HTTPClientError, RequestConfig
 from .constants import ERROR_MESSAGES
+from typing import Optional, Dict, Any, Tuple
 import logging
 logger = logging.getLogger(__name__)
 
