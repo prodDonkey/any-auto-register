@@ -11,6 +11,14 @@ const STATUS_VARIANT: Record<string, any> = {
   expired: 'warning', invalid: 'danger',
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  registered: '已注册',
+  trial: '试用中',
+  subscribed: '已订阅',
+  expired: '已过期',
+  invalid: '已失效',
+}
+
 // ── SSE 日志面板 ──────────────────────────────────────────
 function LogPanel({ taskId, onDone }: { taskId: string; onDone: () => void }) {
   const [lines, setLines] = useState<string[]>([])
@@ -278,7 +286,9 @@ function DetailModal({ acc, onClose, onSave }: { acc: any; onClose: () => void; 
             <label className="text-xs text-[var(--text-muted)] block mb-1">状态</label>
             <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
               className="w-full bg-[var(--bg-hover)] border border-[var(--border)] text-[var(--text-primary)] rounded-md px-3 py-2 text-sm">
-              {['registered','trial','subscribed','expired','invalid'].map(s => <option key={s} value={s}>{s}</option>)}
+              {['registered', 'trial', 'subscribed', 'expired', 'invalid'].map((s) => (
+                <option key={s} value={s}>{STATUS_LABELS[s] || s}</option>
+              ))}
             </select>
           </div>
           {extraTokenKeys.length > 0 && (
@@ -461,7 +471,7 @@ const [accounts, setAccounts] = useState<any[]>([])
                     <button onClick={e => { e.stopPropagation(); copy(acc.password) }} className="text-[var(--text-muted)] hover:text-[var(--text-secondary)]"><Copy className="h-3 w-3" /></button>
                   </div>
                 </td>
-                <td className="px-4 py-3"><Badge variant={STATUS_VARIANT[acc.status] || 'secondary'}>{acc.status}</Badge></td>
+                <td className="px-4 py-3"><Badge variant={STATUS_VARIANT[acc.status] || 'secondary'}>{STATUS_LABELS[acc.status] || acc.status}</Badge></td>
                 <td className="px-4 py-3 text-[var(--text-muted)] text-xs">{acc.region || '-'}</td>
                 <td className="px-4 py-3">
                   {acc.cashier_url ? (

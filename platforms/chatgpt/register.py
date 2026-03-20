@@ -36,6 +36,10 @@ from .constants import (
 logger = logging.getLogger(__name__)
 
 
+crud = None
+get_db = None
+
+
 @dataclass
 class RegistrationResult:
     """注册结果"""
@@ -90,7 +94,7 @@ class RegistrationEngine:
 
     def __init__(
         self,
-        email_service: BaseEmailService,
+        email_service: Any,
         proxy_url: Optional[str] = None,
         callback_logger: Optional[Callable[[str], None]] = None,
         task_uuid: Optional[str] = None
@@ -147,7 +151,7 @@ class RegistrationEngine:
             self.callback_logger(log_message)
 
         # 记录到数据库（如果有关联任务）
-        if self.task_uuid:
+        if self.task_uuid and get_db and crud:
             try:
                 with get_db() as db:
                     crud.append_task_log(db, self.task_uuid, log_message)
@@ -375,6 +379,8 @@ class RegistrationEngine:
     def _mark_email_as_registered(self):
         """标记邮箱为已注册状态（用于防止重复尝试）"""
         try:
+            if not get_db or not crud:
+                return
             with get_db() as db:
                 # 检查是否已存在该邮箱的记录
                 existing = crud.get_account_by_email(db, self.email)

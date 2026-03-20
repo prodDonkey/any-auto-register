@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 from typing import Optional
+from pathlib import Path
 from core.db import TaskLog, engine
 import time, json, asyncio, threading
 
@@ -13,6 +14,7 @@ _tasks_lock = threading.Lock()
 
 MAX_FINISHED_TASKS = 200
 CLEANUP_THRESHOLD = 250
+TOKEN_EXPORT_DIR = Path("/Users/yaohongliang/work/liuyao/github/AI-Account-Toolkit/any-auto-register/data/tokens")
 
 
 def _cleanup_old_tasks():
@@ -92,6 +94,36 @@ def _auto_upload_cpa(task_id: str, account):
         _log(task_id, f"  [CPA] 自动上传异常: {e}")
 
 
+def _save_local_token_json(task_id: str, account):
+    """注册成功后导出本地 token JSON（仅 chatgpt 平台）。"""
+    if getattr(account, "platform", "") != "chatgpt":
+        return
+    try:
+        from platforms.chatgpt.cpa_upload import generate_token_json
+
+        class _A: pass
+        a = _A()
+        a.email = account.email
+        extra = account.extra or {}
+        a.access_token = extra.get("access_token") or account.token
+        a.refresh_token = extra.get("refresh_token", "")
+        a.id_token = extra.get("id_token", "")
+
+        token_data = generate_token_json(a)
+        TOKEN_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+        safe_email = "".join(ch if ch.isalnum() or ch in ("@", ".", "-", "_") else "_" for ch in account.email)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        output_path = TOKEN_EXPORT_DIR / f"{timestamp}-{safe_email}.json"
+        output_path.write_text(
+            json.dumps(token_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        _log(task_id, f"  [本地保存] ✓ {output_path}")
+    except Exception as e:
+        _log(task_id, f"  [本地保存] ✗ {e}")
+
+
 def _run_register(task_id: str, req: RegisterTaskRequest):
     from core.registry import get
     from core.base_platform import RegisterConfig
@@ -140,6 +172,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                     password=req.password,
                 )
                 save_account(account)
+                _save_local_token_json(task_id, account)
                 if _proxy: proxy_pool.report_success(_proxy)
                 _log(task_id, f"✓ 注册成功: {account.email}")
                 _save_task_log(req.platform, account.email, "success")
