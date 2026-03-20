@@ -129,6 +129,8 @@ class ChatGPTPlatform(BasePlatform):
                  {"key": "sync_url", "label": "Sync URL", "type": "text"},
                  {"key": "base_url", "label": "Sub2Api Base URL", "type": "text"},
                  {"key": "bearer_token", "label": "Bearer Token", "type": "text"},
+                 {"key": "admin_email", "label": "管理员邮箱", "type": "text"},
+                 {"key": "admin_password", "label": "管理员密码", "type": "text"},
              ]},
         ]
 
@@ -179,13 +181,16 @@ class ChatGPTPlatform(BasePlatform):
             return {"ok": ok, "data": msg}
 
         elif action_id == "upload_sub2api":
-            from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_sub2api_http_sync
+            from core.sub2api import upload_to_sub2api_http_sync
+            from platforms.chatgpt.cpa_upload import generate_token_json
             token_data = generate_token_json(a)
             ok, msg = upload_to_sub2api_http_sync(
                 token_data,
                 sync_url=params.get("sync_url"),
                 base_url=params.get("base_url"),
                 bearer_token=params.get("bearer_token"),
+                admin_email=params.get("admin_email"),
+                admin_password=params.get("admin_password"),
             )
             return {"ok": ok, "data": msg}
 

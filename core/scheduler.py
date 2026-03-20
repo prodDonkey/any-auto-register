@@ -8,10 +8,32 @@ import threading
 import time
 
 
+def _as_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class Scheduler:
     def __init__(self):
         self._running = False
         self._thread: threading.Thread = None
+        self._last_trial_check_at = 0.0
+        self._last_sub2api_maintain_at = 0.0
 
     def start(self):
         if self._running:
@@ -27,11 +49,14 @@ class Scheduler:
     def _loop(self):
         while self._running:
             try:
-                self.check_trial_expiry()
+                now = time.time()
+                if now - self._last_trial_check_at >= 3600:
+                    self.check_trial_expiry()
+                    self._last_trial_check_at = now
+                self.run_sub2api_maintenance_if_due(now)
             except Exception as e:
                 print(f"[Scheduler] 错误: {e}")
-            # 每小时检查一次
-            time.sleep(3600)
+            time.sleep(60)
 
     def check_trial_expiry(self):
         """检查 trial 到期账号，更新状态"""
@@ -50,6 +75,33 @@ class Scheduler:
             s.commit()
             if updated:
                 print(f"[Scheduler] {updated} 个 trial 账号已到期")
+
+    def run_sub2api_maintenance_if_due(self, now_ts: float | None = None):
+        from core.config_store import config_store
+
+        sync_url = str(config_store.get("sub2api_sync_url", "") or "").strip()
+        auto_maintain = _as_bool(config_store.get("sub2api_auto_maintain", "0"))
+        if not sync_url or not auto_maintain:
+            return
+
+        interval_minutes = max(5, _to_int(config_store.get("sub2api_maintain_interval_minutes", "30"), 30))
+        now = now_ts or time.time()
+        if now - self._last_sub2api_maintain_at < interval_minutes * 60:
+            return
+
+        self._last_sub2api_maintain_at = now
+        try:
+            from core.sub2api import maintain_sub2api_pool
+
+            ok, msg, _detail = maintain_sub2api_pool(
+                refresh_abnormal_accounts=_as_bool(config_store.get("sub2api_maintain_refresh_abnormal_accounts", "1"), True),
+                delete_abnormal_accounts=_as_bool(config_store.get("sub2api_maintain_delete_abnormal_accounts", "1"), True),
+                dedupe_duplicate_accounts=_as_bool(config_store.get("sub2api_maintain_dedupe_duplicate_accounts", "1"), True),
+            )
+            prefix = "[Scheduler][Sub2Api]"
+            print(f"{prefix} {'完成' if ok else '失败'}: {msg}")
+        except Exception as e:
+            print(f"[Scheduler][Sub2Api] 维护异常: {e}")
 
     def check_accounts_valid(self, platform: str = None, limit: int = 50):
         """批量检测账号有效性"""

@@ -16,6 +16,12 @@ CONFIG_KEYS = [
     "cpa_api_url", "cpa_api_key",
     "team_manager_url", "team_manager_key",
     "sub2api_sync_url", "sub2api_base_url", "sub2api_bearer_token",
+    "sub2api_admin_email", "sub2api_admin_password",
+    "sub2api_auto_sync", "sub2api_min_candidates",
+    "sub2api_auto_maintain", "sub2api_maintain_interval_minutes",
+    "sub2api_maintain_refresh_abnormal_accounts",
+    "sub2api_maintain_delete_abnormal_accounts",
+    "sub2api_maintain_dedupe_duplicate_accounts",
 ]
 
 

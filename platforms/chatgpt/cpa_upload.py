@@ -1,19 +1,19 @@
 """
-ChatGPT 账号上传功能。
+ChatGPT 平台专属上传辅助：
 
-- CPA
-- Team Manager
-- Sub2Api Sync HTTP
+- 生成 ChatGPT Token JSON
+- 上传到 CPA
+- 上传到 Team Manager
 """
 
-import json
 import base64
+import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Tuple
-from datetime import datetime, timezone, timedelta
 
-from curl_cffi import requests as cffi_requests
 from curl_cffi import CurlMime
+from curl_cffi import requests as cffi_requests
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +36,14 @@ def _decode_jwt_payload(token: str) -> dict:
 def _get_config_value(key: str) -> str:
     try:
         from core.config_store import config_store
+
         return config_store.get(key, "")
     except Exception:
         return ""
 
 
 def generate_token_json(account) -> dict:
-    """
-    生成 CPA 格式的 Token JSON。
-    接受任意 duck-typed 对象（需有 email, access_token, refresh_token 属性），
-    expired / account_id 从 JWT 自动解码，与 chatgpt_register 逻辑一致。
-    """
+    """生成 ChatGPT/CPA 共用的 token JSON。"""
     email = getattr(account, "email", "")
     access_token = getattr(account, "access_token", "")
     refresh_token = getattr(account, "refresh_token", "")
@@ -60,8 +57,7 @@ def generate_token_json(account) -> dict:
         account_id = auth_info.get("chatgpt_account_id", "")
         exp_timestamp = payload.get("exp")
         if isinstance(exp_timestamp, int) and exp_timestamp > 0:
-            exp_dt = datetime.fromtimestamp(
-                exp_timestamp, tz=timezone(timedelta(hours=8)))
+            exp_dt = datetime.fromtimestamp(exp_timestamp, tz=timezone(timedelta(hours=8)))
             expired_str = exp_dt.strftime("%Y-%m-%dT%H:%M:%S+08:00")
 
     now = datetime.now(tz=timezone(timedelta(hours=8)))
@@ -83,8 +79,7 @@ def upload_to_cpa(
     api_key: str = None,
     proxy: str = None,
 ) -> Tuple[bool, str]:
-    """上传单个账号到 CPA 管理平台（不走代理）。
-    api_url / api_key 为空时自动从 ConfigStore 读取。"""
+    """上传单个账号到 CPA 管理平台（不走代理）。"""
     if not api_url:
         api_url = _get_config_value("cpa_api_url")
     if not api_key:
@@ -146,8 +141,7 @@ def upload_to_team_manager(
     api_url: str = None,
     api_key: str = None,
 ) -> Tuple[bool, str]:
-    """上传单账号到 Team Manager（直连，不走代理）。
-    api_url / api_key 为空时自动从 ConfigStore 读取。"""
+    """上传单账号到 Team Manager（直连，不走代理）。"""
     if not api_url:
         api_url = _get_config_value("team_manager_url")
     if not api_key:
@@ -201,87 +195,8 @@ def upload_to_team_manager(
         return False, f"上传异常: {str(e)}"
 
 
-def upload_to_sub2api_http_sync(
-    token_data: dict,
-    sync_url: str = None,
-    base_url: str = None,
-    bearer_token: str = None,
-) -> Tuple[bool, str]:
-    """通过独立 Sub2Api Sync HTTP 服务上传账号。
-
-    默认调用 POST {sync_url}/sync，token_data 直接作为 token_data 传入。
-    sync_url / base_url / bearer_token 为空时自动从 ConfigStore 读取。
-    """
-    if not sync_url:
-        sync_url = _get_config_value("sub2api_sync_url")
-    if not base_url:
-        base_url = _get_config_value("sub2api_base_url")
-    if not bearer_token:
-        bearer_token = _get_config_value("sub2api_bearer_token")
-
-    sync_url = (sync_url or "").strip()
-    base_url = (base_url or "").strip()
-    bearer_token = (bearer_token or "").strip()
-
-    if not sync_url:
-        return False, "Sub2Api Sync URL 未配置"
-
-    url = sync_url.rstrip("/")
-    if not url.endswith("/sync"):
-        url = url + "/sync"
-
-    payload = {
-        "token_data": token_data,
-        "base_url": base_url,
-        "bearer": bearer_token,
-        "check_before": True,
-        "check_after": True,
-    }
-    if not base_url:
-        payload.pop("base_url")
-    if not bearer_token:
-        payload.pop("bearer")
-
-    try:
-        request_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        resp = cffi_requests.post(
-            url,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-            data=request_body,
-            proxies=None,
-            verify=False,
-            timeout=30,
-            impersonate="chrome110",
-        )
-        body_text = resp.text[:400]
-        data = {}
-        try:
-            data = resp.json()
-        except Exception:
-            data = {}
-
-        if resp.status_code in (200, 201) and bool(data.get("ok")):
-            result = data.get("result") if isinstance(data.get("result"), dict) else {}
-            reason = str(result.get("reason") or "")
-            if reason == "updated_existing_before_create":
-                return True, f"Sub2Api 已更新现有账号 id={result.get('existing_id')}"
-            if result.get("skipped"):
-                return True, "Sub2Api 已存在该账号，已跳过"
-            return True, "Sub2Api 同步成功"
-
-        detail = ""
-        if isinstance(data, dict):
-            detail = str(data.get("detail") or data.get("message") or body_text)
-        else:
-            detail = body_text
-        return False, f"Sub2Api 同步失败: HTTP {resp.status_code} - {detail}"
-    except Exception as e:
-        logger.error(f"Sub2Api Sync 上传异常: {e}")
-        return False, f"上传异常: {str(e)}"
-
-
 def test_cpa_connection(api_url: str, api_token: str, proxy: str = None) -> Tuple[bool, str]:
-    """测试 CPA 连接（不走代理）"""
+    """测试 CPA 连接（不走代理）。"""
     if not api_url:
         return False, "API URL 不能为空"
     if not api_token:

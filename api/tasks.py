@@ -100,9 +100,22 @@ def _auto_upload_sub2api(task_id: str, account):
         return
     try:
         from core.config_store import config_store
+        from core.sub2api import as_bool
+
         sync_url = config_store.get("sub2api_sync_url", "")
-        if sync_url:
-            from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_sub2api_http_sync
+        auto_sync_raw = config_store.get("sub2api_auto_sync", "")
+        auto_sync_enabled = bool(sync_url) if str(auto_sync_raw).strip() == "" else as_bool(auto_sync_raw)
+        if sync_url and auto_sync_enabled:
+            from core.sub2api import should_upload_sub2api, upload_to_sub2api_http_sync
+            from platforms.chatgpt.cpa_upload import generate_token_json
+
+            min_candidates = config_store.get("sub2api_min_candidates", "0")
+            should_upload, reason = should_upload_sub2api(min_candidates=min_candidates)
+            if not should_upload:
+                _log(task_id, f"  [Sub2Api] - {reason}")
+                return
+            if reason:
+                _log(task_id, f"  [Sub2Api] - {reason}")
 
             class _A:
                 pass
@@ -186,7 +199,14 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                 proxy=_proxy,
                 extra=req.extra,
             )
-            _mailbox = mailbox.__class__(**mailbox.__dict__) if req.concurrency > 1 else mailbox
+            _mailbox = (
+                create_mailbox(
+                    provider=req.extra.get("mail_provider", "laoudo"),
+                    extra=req.extra,
+                    proxy=_proxy,
+                )
+                if req.concurrency > 1 else mailbox
+            )
             _platform = PlatformCls(config=_config, mailbox=_mailbox)
             _platform._log_fn = lambda msg: _log(task_id, msg)
             try:

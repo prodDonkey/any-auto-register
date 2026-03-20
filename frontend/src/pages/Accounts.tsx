@@ -4,7 +4,7 @@ import { apiFetch, API_BASE } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { RefreshCw, Copy, ExternalLink, PlusCircle, Download, Upload, Plus, X } from 'lucide-react'
+import { RefreshCw, Copy, ExternalLink, PlusCircle, Download, Upload, Plus, X, Server } from 'lucide-react'
 
 const STATUS_VARIANT: Record<string, any> = {
   registered: 'default', trial: 'success', subscribed: 'success',
@@ -367,11 +367,19 @@ const [accounts, setAccounts] = useState<any[]>([])
   const [showImport, setShowImport] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [showRegister, setShowRegister] = useState(false)
+  const [syncingSub2Api, setSyncingSub2Api] = useState(false)
+  const [syncToast, setSyncToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 400)
     return () => clearTimeout(timer)
   }, [search])
+
+  useEffect(() => {
+    if (!syncToast) return
+    const timer = setTimeout(() => setSyncToast(null), 5000)
+    return () => clearTimeout(timer)
+  }, [syncToast])
 
   const load = useCallback(async (p = tab, s = debouncedSearch, fs = filterStatus) => {
     setLoading(true)
@@ -401,8 +409,42 @@ const [accounts, setAccounts] = useState<any[]>([])
     else { const el = document.createElement('textarea'); el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el) }
   }
 
+  const syncCurrentPageToSub2Api = async () => {
+    if (tab !== 'chatgpt' || accounts.length === 0 || syncingSub2Api) return
+    if (!confirm(`确认同步当前列表中的 ${accounts.length} 个 ChatGPT 账号到 Sub2Api？`)) return
+    setSyncingSub2Api(true)
+    try {
+      const data = await apiFetch('/sub2api/sync-accounts', {
+        method: 'POST',
+        body: JSON.stringify({ account_ids: accounts.map((acc) => acc.id) }),
+      })
+      const summary = data.summary || {}
+      const success = Number(summary.success || 0)
+      const fail = Number(summary.fail || 0)
+      const total = Number(summary.total || accounts.length)
+      const msg = fail > 0
+        ? `Sub2Api 同步完成：成功 ${success}，失败 ${fail}，共 ${total} 个`
+        : `Sub2Api 同步完成：成功 ${success} 个`
+      setSyncToast({ type: fail > 0 ? 'error' : 'success', text: msg })
+    } catch (e: any) {
+      setSyncToast({ type: 'error', text: e?.message || 'Sub2Api 同步失败' })
+    } finally {
+      setSyncingSub2Api(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
+      {syncToast && (
+        <div
+          className={`fixed top-4 right-4 z-50 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium animate-in fade-in slide-in-from-top-2 ${
+            syncToast.type === 'success' ? 'bg-emerald-500/90 text-white' : 'bg-red-500/90 text-white'
+          }`}
+          onClick={() => setSyncToast(null)}
+        >
+          {syncToast.type === 'success' ? '✓ ' : '✗ '}{syncToast.text}
+        </div>
+      )}
       {detail && <DetailModal acc={detail} onClose={() => setDetail(null)} onSave={() => { setDetail(null); load() }} />}
       {showImport && <ImportModal platform={tab} onClose={() => setShowImport(false)} onDone={() => { setShowImport(false); load() }} />}
       {showAdd && <AddModal platform={tab} onClose={() => setShowAdd(false)} onDone={() => { setShowAdd(false); load() }} />}
@@ -428,6 +470,17 @@ const [accounts, setAccounts] = useState<any[]>([])
         </div>
         {/* 右侧：操作按钮 */}
         <div className="flex items-center gap-2">
+          {tab === 'chatgpt' && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={syncCurrentPageToSub2Api}
+              disabled={accounts.length === 0 || syncingSub2Api}
+            >
+              <Server className="h-4 w-4 mr-1" />
+              {syncingSub2Api ? '同步中...' : '同步Sub2Api'}
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setShowImport(true)}><Upload className="h-4 w-4 mr-1" />导入</Button>
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={accounts.length === 0}><Download className="h-4 w-4 mr-1" />导出</Button>
           <Button variant="outline" size="sm" onClick={() => setShowAdd(true)}><Plus className="h-4 w-4 mr-1" />新增</Button>

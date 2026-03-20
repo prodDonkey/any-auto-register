@@ -143,6 +143,8 @@ class Sub2ApiUploadReq(BaseModel):
     sync_url: str
     base_url: str = ""
     bearer_token: str = ""
+    admin_email: str = ""
+    admin_password: str = ""
 
 
 @router.post("/{account_id}/upload-sub2api")
@@ -151,12 +153,15 @@ def upload_sub2api(account_id: int, req: Sub2ApiUploadReq,
     acc = _get_account(account_id, session)
     codex_acc = _to_codex_account(acc)
 
-    from platforms.chatgpt.cpa_upload import generate_token_json, upload_to_sub2api_http_sync
+    from core.sub2api import upload_to_sub2api_http_sync
+    from platforms.chatgpt.cpa_upload import generate_token_json
     token_data = generate_token_json(codex_acc)
     ok, msg = upload_to_sub2api_http_sync(
         token_data,
         sync_url=req.sync_url,
         base_url=req.base_url,
         bearer_token=req.bearer_token,
+        admin_email=req.admin_email,
+        admin_password=req.admin_password,
     )
     return {"ok": ok, "message": msg}

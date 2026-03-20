@@ -1,8 +1,35 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Save, Eye, EyeOff, Mail, Shield, Cpu, RefreshCw, CheckCircle, XCircle } from 'lucide-react'
+import {
+  Save,
+  Eye,
+  EyeOff,
+  Mail,
+  Shield,
+  Cpu,
+  RefreshCw,
+  CheckCircle,
+  XCircle,
+  Server,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
+
+type FieldType = 'text' | 'number' | 'toggle' | 'checkbox'
+
+type SettingField = {
+  key: string
+  label: string
+  placeholder?: string
+  secret?: boolean
+  type?: FieldType
+}
+
+type SettingSection = {
+  section: string
+  desc?: string
+  items: SettingField[]
+}
 
 const SELECT_FIELDS: Record<string, { label: string; value: string }[]> = {
   mail_provider: [
@@ -26,7 +53,7 @@ const SELECT_FIELDS: Record<string, { label: string; value: string }[]> = {
   ],
 }
 
-const TABS = [
+const TABS: { id: string; label: string; icon: any; sections: SettingSection[] }[] = [
   {
     id: 'register', label: '注册设置', icon: Cpu,
     sections: [{
@@ -119,28 +146,99 @@ const TABS = [
         { key: 'team_manager_url', label: 'API URL', placeholder: 'https://your-tm.example.com' },
         { key: 'team_manager_key', label: 'API Key', secret: true },
       ],
-    }, {
-      section: 'Sub2Api',
-      desc: '注册完成后调用独立 Sync 服务上传到 Sub2Api',
+    }],
+  },
+  {
+    id: 'sub2api', label: 'Sub2Api', icon: Server,
+    sections: [{
+      section: 'Sync 服务',
+      desc: 'any-auto-register 通过独立 Sync 服务把账号同步到 Sub2Api',
       items: [
         { key: 'sub2api_sync_url', label: 'Sync URL', placeholder: 'http://127.0.0.1:18521/sync' },
-        { key: 'sub2api_base_url', label: 'Sub2Api URL', placeholder: 'http://106.53.27.215:8080' },
-        { key: 'sub2api_bearer_token', label: 'Bearer Token', secret: true },
+      ],
+    }, {
+      section: '平台认证',
+      desc: '保存后用于登录 Sub2Api 并自动获取 Bearer Token',
+      items: [
+        { key: 'sub2api_base_url', label: '平台地址', placeholder: 'http://106.53.27.215:8080' },
+        { key: 'sub2api_admin_email', label: '管理员邮箱', placeholder: 'admin@example.com' },
+        { key: 'sub2api_admin_password', label: '密码', secret: true, placeholder: '请输入密码' },
+      ],
+    }, {
+      section: '同步策略',
+      desc: '控制注册完成后是否自动同步以及账号池目标阈值',
+      items: [
+        { key: 'sub2api_auto_sync', label: '注册后自动导入', type: 'toggle' },
+        { key: 'sub2api_min_candidates', label: '目标阈值', type: 'number', placeholder: '200' },
+      ],
+    }, {
+      section: '自动维护',
+      desc: '后台调度器会按间隔执行维护动作',
+      items: [
+        { key: 'sub2api_auto_maintain', label: '自动维护', type: 'toggle' },
+        { key: 'sub2api_maintain_interval_minutes', label: '维护间隔(分钟)', type: 'number', placeholder: '30' },
+      ],
+    }, {
+      section: '维护动作',
+      desc: '手动维护和自动维护都会按勾选项执行',
+      items: [
+        { key: 'sub2api_maintain_refresh_abnormal_accounts', label: '异常账号测活', type: 'checkbox' },
+        { key: 'sub2api_maintain_delete_abnormal_accounts', label: '删除仍异常账号', type: 'checkbox' },
+        { key: 'sub2api_maintain_dedupe_duplicate_accounts', label: '重复账号清理', type: 'checkbox' },
       ],
     }],
   },
 ]
 
+const isTruthy = (value: unknown) => ['1', 'true', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase())
+
 function Field({ field, form, setForm, showSecret, setShowSecret }: any) {
-  const { key, label, placeholder, secret } = field
+  const { key, label, placeholder, secret, type } = field
   const options = SELECT_FIELDS[key]
+  const value = form[key] ?? ''
+
+  if (type === 'toggle') {
+    const checked = isTruthy(value)
+    return (
+      <div className="flex items-center justify-between py-3 border-b border-white/5 last:border-0">
+        <div>
+          <div className="text-sm text-[var(--text-primary)] font-medium">{label}</div>
+        </div>
+        <label className="inline-flex items-center gap-3 cursor-pointer">
+          <span className="text-xs text-[var(--text-muted)]">{checked ? '已开启' : '已关闭'}</span>
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={e => setForm((f: any) => ({ ...f, [key]: e.target.checked ? '1' : '0' }))}
+            className="h-4 w-4 accent-indigo-500"
+          />
+        </label>
+      </div>
+    )
+  }
+
+  if (type === 'checkbox') {
+    const checked = isTruthy(value)
+    return (
+      <label className="flex items-center gap-3 py-3 border-b border-white/5 last:border-0 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={e => setForm((f: any) => ({ ...f, [key]: e.target.checked ? '1' : '0' }))}
+          className="h-4 w-4 accent-indigo-500"
+        />
+        <span className="text-sm text-[var(--text-primary)]">{label}</span>
+      </label>
+    )
+  }
+
   return (
     <div className="grid grid-cols-3 gap-4 items-center py-3 border-b border-white/5 last:border-0">
       <label className="text-sm text-[var(--text-secondary)] font-medium">{label}</label>
       <div className="col-span-2 relative">
         {options ? (
           <select
-            value={form[key] || options[0].value}
+            value={value || options[0].value}
             onChange={e => setForm((f: any) => ({ ...f, [key]: e.target.value }))}
             className="w-full bg-[var(--bg-base)] border border-[var(--border)] text-[var(--text-primary)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500 appearance-none"
           >
@@ -149,14 +247,15 @@ function Field({ field, form, setForm, showSecret, setShowSecret }: any) {
         ) : (
           <>
             <input
-              type={secret && !showSecret[key] ? 'password' : 'text'}
-              value={form[key] || ''}
+              type={secret && !showSecret[key] ? 'password' : (type === 'number' ? 'number' : 'text')}
+              value={String(value)}
               onChange={e => setForm((f: any) => ({ ...f, [key]: e.target.value }))}
               placeholder={placeholder}
               className="w-full bg-[var(--bg-base)] border border-[var(--border)] text-[var(--text-primary)] rounded-lg px-3 py-2 text-sm pr-10 focus:outline-none focus:border-indigo-500 placeholder:text-[var(--text-muted)]"
             />
             {secret && (
               <button
+                type="button"
                 onClick={() => setShowSecret((s: any) => ({ ...s, [key]: !s[key] }))}
                 className="absolute right-3 top-2.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
               >
@@ -177,29 +276,76 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [solverRunning, setSolverRunning] = useState<boolean | null>(null)
+  const [sub2apiTesting, setSub2apiTesting] = useState(false)
+  const [sub2apiStatus, setSub2apiStatus] = useState('')
 
-  useEffect(() => { apiFetch('/config').then(setForm) }, [])
+  useEffect(() => {
+    apiFetch('/config').then((data) => {
+      setForm({
+        sub2api_auto_sync: '0',
+        sub2api_min_candidates: '200',
+        sub2api_auto_maintain: '0',
+        sub2api_maintain_interval_minutes: '30',
+        sub2api_maintain_refresh_abnormal_accounts: '1',
+        sub2api_maintain_delete_abnormal_accounts: '1',
+        sub2api_maintain_dedupe_duplicate_accounts: '1',
+        ...data,
+      })
+    })
+  }, [])
 
   const checkSolver = async () => {
-    try { const d = await apiFetch('/solver/status'); setSolverRunning(d.running) }
-    catch { setSolverRunning(false) }
+    try {
+      const d = await apiFetch('/solver/status')
+      setSolverRunning(d.running)
+    } catch {
+      setSolverRunning(false)
+    }
   }
+
   const restartSolver = async () => {
     await apiFetch('/solver/restart', { method: 'POST' })
     setSolverRunning(null)
     setTimeout(checkSolver, 4000)
   }
+
   useEffect(() => { checkSolver() }, [])
 
   const save = async () => {
     setSaving(true)
     try {
       await apiFetch('/config', { method: 'PUT', body: JSON.stringify({ data: form }) })
-      setSaved(true); setTimeout(() => setSaved(false), 2000)
-    } finally { setSaving(false) }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const testSub2Api = async () => {
+    setSub2apiTesting(true)
+    setSub2apiStatus('正在测试连接...')
+    try {
+      const data = await apiFetch('/sub2api/test', {
+        method: 'POST',
+        body: JSON.stringify({
+          sync_url: form.sub2api_sync_url || '',
+          base_url: form.sub2api_base_url || '',
+          bearer_token: form.sub2api_bearer_token || '',
+          admin_email: form.sub2api_admin_email || '',
+          admin_password: form.sub2api_admin_password || '',
+        }),
+      })
+      setSub2apiStatus(data.message || (data.ok ? '连接成功' : '连接失败'))
+    } catch (error: any) {
+      setSub2apiStatus(error?.message || '连接失败')
+    } finally {
+      setSub2apiTesting(false)
+    }
   }
 
   const tab = TABS.find(t => t.id === activeTab)!
+  const isSub2ApiTab = activeTab === 'sub2api'
 
   return (
     <div className="space-y-6">
@@ -209,22 +355,23 @@ export default function Settings() {
       </div>
 
       <div className="flex gap-6">
-        {/* Left nav */}
         <div className="w-44 shrink-0 space-y-1">
           {TABS.map(({ id, label, icon: Icon }) => (
-            <button key={id} onClick={() => setActiveTab(id)}
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
               className={cn(
                 'w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors',
                 activeTab === id
                   ? 'bg-indigo-600/20 text-[var(--text-accent)] font-medium'
-                  : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]'
-              )}>
+                  : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]',
+              )}
+            >
               <Icon className="h-4 w-4" />
               {label}
             </button>
           ))}
 
-          {/* Solver status */}
           <div className="mt-4 pt-4 border-t border-[var(--border)]">
             <p className="text-xs text-[var(--text-muted)] px-3 mb-2">Turnstile Solver</p>
             <div className="px-3 flex items-center gap-2">
@@ -237,14 +384,15 @@ export default function Settings() {
                 {solverRunning === null ? '检测中' : solverRunning ? '运行中' : '未运行'}
               </span>
             </div>
-            <button onClick={restartSolver}
-              className="mt-2 w-full text-xs px-3 py-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] rounded-lg text-left">
+            <button
+              onClick={restartSolver}
+              className="mt-2 w-full text-xs px-3 py-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] rounded-lg text-left"
+            >
               重启 Solver
             </button>
           </div>
         </div>
 
-        {/* Right content */}
         <div className="flex-1 space-y-4">
           {tab.sections.map(({ section, desc, items }) => (
             <div key={section} className="bg-white/[0.03] border border-[var(--border)] rounded-xl p-5">
@@ -252,17 +400,42 @@ export default function Settings() {
                 <h3 className="text-sm font-semibold text-[var(--text-primary)]">{section}</h3>
                 {desc && <p className="text-xs text-[var(--text-muted)] mt-0.5">{desc}</p>}
               </div>
-              {items.map((field: any) => (
-                <Field key={field.key} field={field} form={form} setForm={setForm}
-                  showSecret={showSecret} setShowSecret={setShowSecret} />
+              {items.length === 0 ? (
+                <div className="text-sm text-[var(--text-muted)]">当前无需配置</div>
+              ) : items.map((field) => (
+                <Field
+                  key={field.key}
+                  field={field}
+                  form={form}
+                  setForm={setForm}
+                  showSecret={showSecret}
+                  setShowSecret={setShowSecret}
+                />
               ))}
+              {isSub2ApiTab && section === '平台认证' && (
+                <div className="pt-4 flex items-center gap-3">
+                  <Button variant="outline" onClick={testSub2Api} disabled={sub2apiTesting}>
+                    {sub2apiTesting ? '测试中...' : '测试连接'}
+                  </Button>
+                  {sub2apiStatus && (
+                    <p className="text-sm text-[var(--text-muted)]">{sub2apiStatus}</p>
+                  )}
+                </div>
+              )}
             </div>
           ))}
 
-          <Button onClick={save} disabled={saving} className="w-full">
-            <Save className="h-4 w-4 mr-2" />
-            {saved ? '已保存 ✓' : saving ? '保存中...' : '保存配置'}
-          </Button>
+          {isSub2ApiTab ? (
+            <Button onClick={save} disabled={saving} className="w-full">
+              <Save className="h-4 w-4 mr-2" />
+              {saved ? '已保存 ✓' : saving ? '保存中...' : '保存配置'}
+            </Button>
+          ) : (
+            <Button onClick={save} disabled={saving} className="w-full">
+              <Save className="h-4 w-4 mr-2" />
+              {saved ? '已保存 ✓' : saving ? '保存中...' : '保存配置'}
+            </Button>
+          )}
         </div>
       </div>
     </div>
