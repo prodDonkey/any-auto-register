@@ -14,7 +14,7 @@ _tasks_lock = threading.Lock()
 
 MAX_FINISHED_TASKS = 200
 CLEANUP_THRESHOLD = 250
-TOKEN_EXPORT_DIR = Path("/Users/yaohongliang/work/liuyao/github/AI-Account-Toolkit/any-auto-register/data/tokens")
+TOKEN_EXPORT_DIR = Path(__file__).resolve().parent.parent / "data" / "tokens"
 
 
 def _cleanup_old_tasks():
