@@ -31,15 +31,14 @@ type SettingSection = {
   items: SettingField[]
 }
 
+type MailProviderDefinition = {
+  name: string
+  label: string
+  desc?: string
+  fields: SettingField[]
+}
+
 const SELECT_FIELDS: Record<string, { label: string; value: string }[]> = {
-  mail_provider: [
-    { label: 'Laoudo（固定邮箱）', value: 'laoudo' },
-    { label: 'TempMail.lol（自动生成）', value: 'tempmail_lol' },
-    { label: 'DuckMail（自动生成）', value: 'duckmail' },
-    { label: 'MoeMail (sall.cc)', value: 'moemail' },
-    { label: 'Freemail（自建 CF Worker）', value: 'freemail' },
-    { label: 'CF Worker（自建域名）', value: 'cfworker' },
-  ],
   default_executor: [
     { label: 'API 协议（无浏览器）', value: 'protocol' },
     { label: '无头浏览器', value: 'headless' },
@@ -52,6 +51,73 @@ const SELECT_FIELDS: Record<string, { label: string; value: string }[]> = {
     { label: '手动', value: 'manual' },
   ],
 }
+
+const MAIL_STRATEGY_OPTIONS = [
+  { label: '轮询', value: 'round_robin' },
+  { label: '随机', value: 'random' },
+  { label: '容错优先', value: 'failover' },
+]
+
+const MAIL_PROVIDER_DEFINITIONS: MailProviderDefinition[] = [
+  {
+    name: 'tempmail_lol',
+    label: 'TempMail.lol（自动生成）',
+    desc: '免费临时邮箱，无需注册账号',
+    fields: [
+      { key: 'api_url', label: 'API URL', placeholder: 'https://api.tempmail.lol/v2' },
+    ],
+  },
+  {
+    name: 'moemail',
+    label: 'MoeMail（自动生成）',
+    desc: '自动注册临时账号并生成邮箱',
+    fields: [
+      { key: 'api_url', label: 'API URL', placeholder: 'https://sall.cc' },
+    ],
+  },
+  {
+    name: 'duckmail',
+    label: 'DuckMail（Bearer Token）',
+    desc: '优先使用原生 API，旧版包装层参数仅用于兼容',
+    fields: [
+      { key: 'api_url', label: 'API URL', placeholder: 'https://api.duckmail.sbs' },
+      { key: 'provider_url', label: 'Legacy Provider URL', placeholder: 'https://api.duckmail.sbs' },
+      { key: 'bearer_token', label: 'Legacy Bearer Token', secret: true, placeholder: 'DuckMail Bearer Token' },
+    ],
+  },
+  {
+    name: 'freemail',
+    label: 'Freemail（自建）',
+    desc: '支持管理员令牌或账号密码认证',
+    fields: [
+      { key: 'api_url', label: 'API URL', placeholder: 'https://mail.example.com' },
+      { key: 'admin_token', label: '管理员令牌', secret: true, placeholder: 'Admin Token' },
+      { key: 'username', label: '用户名（可选）', placeholder: '' },
+      { key: 'password', label: '密码（可选）', secret: true, placeholder: '' },
+    ],
+  },
+  {
+    name: 'cfworker',
+    label: 'Cloudflare Temp Email',
+    desc: '基于 Cloudflare Worker 的自建临时邮箱',
+    fields: [
+      { key: 'api_url', label: 'API URL', placeholder: 'https://apimail.example.com' },
+      { key: 'admin_token', label: 'Admin Token', secret: true, placeholder: 'x-admin-auth' },
+      { key: 'domain', label: '域名', placeholder: 'example.com' },
+      { key: 'fingerprint', label: 'Fingerprint（可选）', placeholder: '6703363b...' },
+    ],
+  },
+  {
+    name: 'laoudo',
+    label: 'Laoudo（固定邮箱）',
+    desc: '使用固定邮箱地址和 Account ID',
+    fields: [
+      { key: 'email', label: '邮箱地址', placeholder: 'xxx@laoudo.com' },
+      { key: 'account_id', label: 'Account ID', placeholder: '563' },
+      { key: 'auth_token', label: 'JWT Token', secret: true, placeholder: 'eyJ...' },
+    ],
+  },
+]
 
 const TABS: { id: string; label: string; icon: any; sections: SettingSection[] }[] = [
   {
@@ -66,57 +132,7 @@ const TABS: { id: string; label: string; icon: any; sections: SettingSection[] }
   },
   {
     id: 'mailbox', label: '邮箱服务', icon: Mail,
-    sections: [{
-      section: '默认邮箱服务',
-      desc: '选择注册时使用的邮箱类型',
-      items: [
-        { key: 'mail_provider', label: '邮箱服务' },
-      ],
-    }, {
-      section: 'Laoudo',
-      desc: '固定邮箱，手动配置',
-      items: [
-        { key: 'laoudo_email', label: '邮箱地址', placeholder: 'xxx@laoudo.com' },
-        { key: 'laoudo_account_id', label: 'Account ID', placeholder: '563' },
-        { key: 'laoudo_auth', label: 'JWT Token', placeholder: 'eyJ...', secret: true },
-      ],
-    }, {
-      section: 'Freemail',
-      desc: '基于 Cloudflare Worker 的自建邮箱，支持管理员令牌或账号密码认证',
-      items: [
-        { key: 'freemail_api_url', label: 'API URL', placeholder: 'https://mail.example.com' },
-        { key: 'freemail_admin_token', label: '管理员令牌', secret: true },
-        { key: 'freemail_username', label: '用户名（可选）', placeholder: '' },
-        { key: 'freemail_password', label: '密码（可选）', secret: true },
-      ],
-    }, {
-      section: 'MoeMail',
-      desc: '自动注册账号并生成临时邮箱，默认无需配置',
-      items: [
-        { key: 'moemail_api_url', label: 'API URL', placeholder: 'https://sall.cc' },
-      ],
-    }, {
-      section: 'TempMail.lol',
-      desc: '自动生成邮箱，无需配置，需要代理访问（CN IP 被封）',
-      items: [],
-    }, {
-      section: 'DuckMail',
-      desc: '自动生成邮箱，随机创建账号（默认无需配置）',
-      items: [
-        { key: 'duckmail_api_url', label: 'Web URL', placeholder: 'https://www.duckmail.sbs' },
-        { key: 'duckmail_provider_url', label: 'Provider URL', placeholder: 'https://api.duckmail.sbs' },
-        { key: 'duckmail_bearer', label: 'Bearer Token', placeholder: 'kevin273945', secret: true },
-      ],
-    }, {
-      section: 'CF Worker 自建邮箱',
-      desc: '基于 Cloudflare Worker 的自建临时邮箱服务',
-      items: [
-        { key: 'cfworker_api_url', label: 'API URL', placeholder: 'https://apimail.example.com' },
-        { key: 'cfworker_admin_token', label: '管理员 Token', secret: true },
-        { key: 'cfworker_domain', label: '邮箱域名', placeholder: 'example.com' },
-        { key: 'cfworker_fingerprint', label: 'Fingerprint', placeholder: '6703363b...' },
-      ],
-    }],
+    sections: [],
   },
   {
     id: 'captcha', label: '验证码', icon: Shield,
@@ -271,11 +287,19 @@ function Field({ field, form, setForm, showSecret, setShowSecret }: any) {
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState('register')
-  const [form, setForm] = useState<Record<string, string>>({})
+  const [form, setForm] = useState<Record<string, any>>({})
   const [showSecret, setShowSecret] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [solverRunning, setSolverRunning] = useState<boolean | null>(null)
+  const [mailConfig, setMailConfig] = useState<Record<string, any>>({
+    mail_providers: [],
+    mail_provider_configs: {},
+    mail_strategy: 'round_robin',
+  })
+  const [mailSaving, setMailSaving] = useState(false)
+  const [mailTesting, setMailTesting] = useState(false)
+  const [mailStatus, setMailStatus] = useState('')
   const [sub2apiTesting, setSub2apiTesting] = useState(false)
   const [sub2apiStatus, setSub2apiStatus] = useState('')
 
@@ -292,6 +316,13 @@ export default function Settings() {
         ...data,
       })
     })
+    apiFetch('/mail/config').then((data) => {
+      setMailConfig({
+        mail_providers: Array.isArray(data.mail_providers) ? data.mail_providers : [],
+        mail_provider_configs: data.mail_provider_configs || {},
+        mail_strategy: data.mail_strategy || 'round_robin',
+      })
+    }).catch(() => {})
   }, [])
 
   const checkSolver = async () => {
@@ -322,6 +353,78 @@ export default function Settings() {
     }
   }
 
+  const updateMailProviderChecked = (provider: string, checked: boolean) => {
+    setMailConfig((prev: any) => {
+      const current = Array.isArray(prev.mail_providers) ? [...prev.mail_providers] : []
+      const nextProviders = checked
+        ? (current.includes(provider) ? current : [...current, provider])
+        : current.filter((name: string) => name !== provider)
+      return {
+        ...prev,
+        mail_providers: nextProviders,
+      }
+    })
+  }
+
+  const updateMailProviderField = (provider: string, key: string, value: string) => {
+    setMailConfig((prev: any) => ({
+      ...prev,
+      mail_provider_configs: {
+        ...(prev.mail_provider_configs || {}),
+        [provider]: {
+          ...((prev.mail_provider_configs || {})[provider] || {}),
+          [key]: value,
+        },
+      },
+    }))
+  }
+
+  const saveMailConfig = async () => {
+    setMailSaving(true)
+    try {
+      const providers = Array.isArray(mailConfig.mail_providers) ? mailConfig.mail_providers : []
+      if (providers.length === 0) {
+        setMailStatus('请至少选择一个邮箱提供商')
+        return false
+      }
+      await apiFetch('/mail/config', {
+        method: 'POST',
+        body: JSON.stringify({
+          mail_providers: providers,
+          mail_provider_configs: mailConfig.mail_provider_configs || {},
+          mail_strategy: mailConfig.mail_strategy || 'round_robin',
+        }),
+      })
+      setMailStatus('配置已保存')
+      return true
+    } catch (error: any) {
+      setMailStatus(error?.message || '保存失败')
+      return false
+    } finally {
+      setMailSaving(false)
+    }
+  }
+
+  const testMailConfig = async () => {
+    setMailTesting(true)
+    setMailStatus('测试中...')
+    try {
+      const savedOk = await saveMailConfig()
+      if (!savedOk) return
+      const data = await apiFetch('/mail/test', { method: 'POST' })
+      if (Array.isArray(data.results)) {
+        const msg = data.results.map((item: any) => `${item.provider}: ${item.ok ? 'OK' : item.message}`).join(' | ')
+        setMailStatus(msg || (data.ok ? '连接成功' : '连接失败'))
+      } else {
+        setMailStatus(data.message || (data.ok ? '连接成功' : '连接失败'))
+      }
+    } catch (error: any) {
+      setMailStatus(error?.message || '连接失败')
+    } finally {
+      setMailTesting(false)
+    }
+  }
+
   const testSub2Api = async () => {
     setSub2apiTesting(true)
     setSub2apiStatus('正在测试连接...')
@@ -345,6 +448,7 @@ export default function Settings() {
   }
 
   const tab = TABS.find(t => t.id === activeTab)!
+  const isMailboxTab = activeTab === 'mailbox'
   const isSub2ApiTab = activeTab === 'sub2api'
 
   return (
@@ -394,38 +498,131 @@ export default function Settings() {
         </div>
 
         <div className="flex-1 space-y-4">
-          {tab.sections.map(({ section, desc, items }) => (
-            <div key={section} className="bg-white/[0.03] border border-[var(--border)] rounded-xl p-5">
-              <div className="mb-4">
-                <h3 className="text-sm font-semibold text-[var(--text-primary)]">{section}</h3>
-                {desc && <p className="text-xs text-[var(--text-muted)] mt-0.5">{desc}</p>}
+          {isMailboxTab ? (
+            <div className="space-y-4">
+              <div className="bg-white/[0.03] border border-[var(--border)] rounded-xl p-5">
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-[var(--text-primary)]">邮箱提供商</h3>
+                  <p className="text-xs text-[var(--text-muted)] mt-0.5">可同时勾选多个邮箱提供商，注册时按策略选择</p>
+                </div>
+                <div className="space-y-3">
+                  {MAIL_PROVIDER_DEFINITIONS.map((provider) => {
+                    const checked = (mailConfig.mail_providers || []).includes(provider.name)
+                    const providerCfg = (mailConfig.mail_provider_configs || {})[provider.name] || {}
+                    return (
+                      <div key={provider.name} className="border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--bg-hover)]/40">
+                        <label className="flex items-center gap-3 px-4 py-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={e => updateMailProviderChecked(provider.name, e.target.checked)}
+                            className="h-4 w-4 accent-indigo-500"
+                          />
+                          <div className="flex-1">
+                            <div className="text-sm font-medium text-[var(--text-primary)]">{provider.label}</div>
+                            {provider.desc && <div className="text-xs text-[var(--text-muted)] mt-0.5">{provider.desc}</div>}
+                          </div>
+                        </label>
+                        {checked && provider.fields.length > 0 && (
+                          <div className="border-t border-[var(--border)] px-4 py-3 space-y-3">
+                            {provider.fields.map((field) => {
+                              const value = providerCfg[field.key] ?? ''
+                              const secretKey = `${provider.name}:${field.key}`
+                              return (
+                                <div key={field.key} className="grid grid-cols-3 gap-4 items-center">
+                                  <label className="text-sm text-[var(--text-secondary)] font-medium">{field.label}</label>
+                                  <div className="col-span-2 relative">
+                                    <input
+                                      type={field.secret && !showSecret[secretKey] ? 'password' : (field.type === 'number' ? 'number' : 'text')}
+                                      value={String(value)}
+                                      onChange={e => updateMailProviderField(provider.name, field.key, e.target.value)}
+                                      placeholder={field.placeholder}
+                                      className="w-full bg-[var(--bg-base)] border border-[var(--border)] text-[var(--text-primary)] rounded-lg px-3 py-2 text-sm pr-10 focus:outline-none focus:border-indigo-500 placeholder:text-[var(--text-muted)]"
+                                    />
+                                    {field.secret && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowSecret((s) => ({ ...s, [secretKey]: !s[secretKey] }))}
+                                        className="absolute right-3 top-2.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+                                      >
+                                        {showSecret[secretKey] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-              {items.length === 0 ? (
-                <div className="text-sm text-[var(--text-muted)]">当前无需配置</div>
-              ) : items.map((field) => (
-                <Field
-                  key={field.key}
-                  field={field}
-                  form={form}
-                  setForm={setForm}
-                  showSecret={showSecret}
-                  setShowSecret={setShowSecret}
-                />
-              ))}
-              {isSub2ApiTab && section === '平台认证' && (
-                <div className="pt-4 flex items-center gap-3">
-                  <Button variant="outline" onClick={testSub2Api} disabled={sub2apiTesting}>
-                    {sub2apiTesting ? '测试中...' : '测试连接'}
-                  </Button>
-                  {sub2apiStatus && (
-                    <p className="text-sm text-[var(--text-muted)]">{sub2apiStatus}</p>
+
+              <div className="bg-white/[0.03] border border-[var(--border)] rounded-xl p-5">
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-[var(--text-primary)]">路由策略</h3>
+                  <p className="text-xs text-[var(--text-muted)] mt-0.5">控制注册时如何从多个邮箱提供商中选取一个</p>
+                </div>
+                <select
+                  value={mailConfig.mail_strategy || 'round_robin'}
+                  onChange={e => setMailConfig((prev: any) => ({ ...prev, mail_strategy: e.target.value }))}
+                  className="w-full max-w-xs bg-[var(--bg-base)] border border-[var(--border)] text-[var(--text-primary)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
+                >
+                  {MAIL_STRATEGY_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Button variant="outline" onClick={testMailConfig} disabled={mailTesting || mailSaving}>
+                  {mailTesting ? '测试中...' : '测试连接'}
+                </Button>
+                <Button onClick={saveMailConfig} disabled={mailSaving || mailTesting} className="flex-1">
+                  <Save className="h-4 w-4 mr-2" />
+                  {mailSaving ? '保存中...' : '保存'}
+                </Button>
+              </div>
+              {mailStatus && <p className="text-sm text-[var(--text-muted)]">{mailStatus}</p>}
+            </div>
+          ) : (
+            <>
+              {tab.sections.map(({ section, desc, items }) => (
+                <div key={section} className="bg-white/[0.03] border border-[var(--border)] rounded-xl p-5">
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-[var(--text-primary)]">{section}</h3>
+                    {desc && <p className="text-xs text-[var(--text-muted)] mt-0.5">{desc}</p>}
+                  </div>
+                  {items.length === 0 ? (
+                    <div className="text-sm text-[var(--text-muted)]">当前无需配置</div>
+                  ) : items.map((field) => (
+                    <Field
+                      key={field.key}
+                      field={field}
+                      form={form}
+                      setForm={setForm}
+                      showSecret={showSecret}
+                      setShowSecret={setShowSecret}
+                    />
+                  ))}
+                  {isSub2ApiTab && section === '平台认证' && (
+                    <div className="pt-4 flex items-center gap-3">
+                      <Button variant="outline" onClick={testSub2Api} disabled={sub2apiTesting}>
+                        {sub2apiTesting ? '测试中...' : '测试连接'}
+                      </Button>
+                      {sub2apiStatus && (
+                        <p className="text-sm text-[var(--text-muted)]">{sub2apiStatus}</p>
+                      )}
+                    </div>
                   )}
                 </div>
-              )}
-            </div>
-          ))}
+              ))}
+            </>
+          )}
 
-          {isSub2ApiTab ? (
+          {isMailboxTab ? null : isSub2ApiTab ? (
             <Button onClick={save} disabled={saving} className="w-full">
               <Save className="h-4 w-4 mr-2" />
               {saved ? '已保存 ✓' : saving ? '保存中...' : '保存配置'}

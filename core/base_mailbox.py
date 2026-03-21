@@ -1,6 +1,26 @@
 """邮箱池基类 - 抽象临时邮箱/收件服务"""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import copy
+import itertools
+import json
+import logging
+import random
+import threading
+
+
+logger = logging.getLogger(__name__)
+
+SUPPORTED_MAIL_PROVIDERS = (
+    "laoudo",
+    "tempmail_lol",
+    "duckmail",
+    "freemail",
+    "moemail",
+    "cfworker",
+)
+
+SUPPORTED_MAIL_STRATEGIES = ("round_robin", "random", "failover")
 
 
 @dataclass
@@ -28,45 +48,274 @@ class BaseMailbox(ABC):
         """返回当前邮件 ID 集合（用于过滤旧邮件）"""
         ...
 
+    def test_connection(self) -> tuple[bool, str]:
+        try:
+            account = self.get_email()
+            email = str(getattr(account, "email", "") or "").strip()
+            if not email:
+                return False, "未返回邮箱地址"
+            return True, f"连接成功: {email}"
+        except Exception as e:
+            return False, str(e)
+
+
+def _parse_json_maybe(value, default):
+    if isinstance(value, type(default)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return copy.deepcopy(default)
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return copy.deepcopy(default)
+        if isinstance(parsed, type(default)):
+            return parsed
+    return copy.deepcopy(default)
+
+
+def _clean_provider_names(raw) -> list[str]:
+    if isinstance(raw, str):
+        raw = _parse_json_maybe(raw, [])
+    names = raw if isinstance(raw, list) else []
+    cleaned = []
+    for name in names:
+        provider = str(name or "").strip().lower()
+        if provider and provider in SUPPORTED_MAIL_PROVIDERS and provider not in cleaned:
+            cleaned.append(provider)
+    return cleaned
+
+
+def _normalize_strategy(raw) -> str:
+    strategy = str(raw or "round_robin").strip().lower()
+    if strategy not in SUPPORTED_MAIL_STRATEGIES:
+        strategy = "round_robin"
+    return strategy
+
+
+def _provider_config_from_legacy(provider: str, cfg: dict) -> dict:
+    source = cfg or {}
+    if provider == "laoudo":
+        return {
+            "email": str(source.get("laoudo_email", "") or "").strip(),
+            "account_id": str(source.get("laoudo_account_id", "") or "").strip(),
+            "auth_token": str(source.get("laoudo_auth", "") or "").strip(),
+        }
+    if provider == "tempmail_lol":
+        return {
+            "api_url": str(source.get("tempmail_api_url", "https://api.tempmail.lol/v2") or "").strip(),
+        }
+    if provider == "duckmail":
+        return {
+            "api_url": str(source.get("duckmail_api_url", "https://api.duckmail.sbs") or "").strip(),
+            "provider_url": str(source.get("duckmail_provider_url", "") or "").strip(),
+            "bearer_token": str(source.get("duckmail_bearer", "") or "").strip(),
+        }
+    if provider == "freemail":
+        return {
+            "api_url": str(source.get("freemail_api_url", "") or "").strip(),
+            "admin_token": str(source.get("freemail_admin_token", "") or "").strip(),
+            "username": str(source.get("freemail_username", "") or "").strip(),
+            "password": str(source.get("freemail_password", "") or "").strip(),
+        }
+    if provider == "moemail":
+        return {
+            "api_url": str(source.get("moemail_api_url", "https://sall.cc") or "").strip(),
+        }
+    if provider == "cfworker":
+        return {
+            "api_url": str(source.get("cfworker_api_url", "") or "").strip(),
+            "admin_token": str(source.get("cfworker_admin_token", "") or "").strip(),
+            "domain": str(source.get("cfworker_domain", "") or "").strip(),
+            "fingerprint": str(source.get("cfworker_fingerprint", "") or "").strip(),
+        }
+    return {}
+
+
+def normalize_mail_config(config: dict | None) -> dict:
+    cfg = copy.deepcopy(config or {})
+
+    raw_provider_configs = _parse_json_maybe(cfg.get("mail_provider_configs"), {})
+    provider_configs = raw_provider_configs if isinstance(raw_provider_configs, dict) else {}
+    normalized_configs: dict[str, dict] = {}
+
+    legacy_provider = str(cfg.get("mail_provider", "moemail") or "moemail").strip().lower()
+    if legacy_provider not in SUPPORTED_MAIL_PROVIDERS:
+        legacy_provider = "moemail"
+
+    providers = _clean_provider_names(cfg.get("mail_providers"))
+    if not providers:
+        providers = [legacy_provider]
+
+    for provider in providers:
+        raw = provider_configs.get(provider)
+        if isinstance(raw, str):
+            raw = _parse_json_maybe(raw, {})
+        raw = raw if isinstance(raw, dict) else {}
+        merged = _provider_config_from_legacy(provider, cfg)
+        for key, value in raw.items():
+            merged[str(key)] = str(value or "").strip()
+        normalized_configs[provider] = merged
+
+    strategy = _normalize_strategy(cfg.get("mail_strategy"))
+
+    return {
+        "mail_provider": providers[0],
+        "mail_providers": providers,
+        "mail_provider_configs": normalized_configs,
+        "mail_strategy": strategy,
+    }
+
+
+def build_mail_config_store_payload(mail_providers: list[str], mail_provider_configs: dict, mail_strategy: str) -> dict:
+    providers = _clean_provider_names(mail_providers)
+    if not providers:
+        providers = ["moemail"]
+
+    raw_configs = mail_provider_configs if isinstance(mail_provider_configs, dict) else {}
+    normalized_configs: dict[str, dict] = {}
+    for provider in providers:
+        raw = raw_configs.get(provider)
+        raw = raw if isinstance(raw, dict) else {}
+        normalized = {}
+        for key, value in raw.items():
+            normalized[str(key)] = str(value or "").strip()
+        normalized_configs[provider] = normalized
+
+    strategy = _normalize_strategy(mail_strategy)
+
+    payload = {
+        "mail_provider": providers[0],
+        "mail_providers": json.dumps(providers, ensure_ascii=False),
+        "mail_provider_configs": json.dumps(normalized_configs, ensure_ascii=False),
+        "mail_strategy": strategy,
+        "laoudo_auth": "",
+        "laoudo_email": "",
+        "laoudo_account_id": "",
+        "tempmail_api_url": "",
+        "duckmail_api_url": "",
+        "duckmail_provider_url": "",
+        "duckmail_bearer": "",
+        "freemail_api_url": "",
+        "freemail_admin_token": "",
+        "freemail_username": "",
+        "freemail_password": "",
+        "moemail_api_url": "",
+        "cfworker_api_url": "",
+        "cfworker_admin_token": "",
+        "cfworker_domain": "",
+        "cfworker_fingerprint": "",
+    }
+
+    payload.update({
+        "laoudo_auth": str(normalized_configs.get("laoudo", {}).get("auth_token", "") or "").strip(),
+        "laoudo_email": str(normalized_configs.get("laoudo", {}).get("email", "") or "").strip(),
+        "laoudo_account_id": str(normalized_configs.get("laoudo", {}).get("account_id", "") or "").strip(),
+        "tempmail_api_url": str(normalized_configs.get("tempmail_lol", {}).get("api_url", "") or "").strip(),
+        "duckmail_api_url": str(normalized_configs.get("duckmail", {}).get("api_url", "") or "").strip(),
+        "duckmail_provider_url": str(normalized_configs.get("duckmail", {}).get("provider_url", "") or "").strip(),
+        "duckmail_bearer": str(normalized_configs.get("duckmail", {}).get("bearer_token", "") or "").strip(),
+        "freemail_api_url": str(normalized_configs.get("freemail", {}).get("api_url", "") or "").strip(),
+        "freemail_admin_token": str(normalized_configs.get("freemail", {}).get("admin_token", "") or "").strip(),
+        "freemail_username": str(normalized_configs.get("freemail", {}).get("username", "") or "").strip(),
+        "freemail_password": str(normalized_configs.get("freemail", {}).get("password", "") or "").strip(),
+        "moemail_api_url": str(normalized_configs.get("moemail", {}).get("api_url", "") or "").strip(),
+        "cfworker_api_url": str(normalized_configs.get("cfworker", {}).get("api_url", "") or "").strip(),
+        "cfworker_admin_token": str(normalized_configs.get("cfworker", {}).get("admin_token", "") or "").strip(),
+        "cfworker_domain": str(normalized_configs.get("cfworker", {}).get("domain", "") or "").strip(),
+        "cfworker_fingerprint": str(normalized_configs.get("cfworker", {}).get("fingerprint", "") or "").strip(),
+    })
+
+    return payload
+
+
+class MultiMailboxRouter:
+    """线程安全的多邮箱提供商路由器，支持轮询/随机/容错策略。"""
+
+    def __init__(self, config: dict):
+        normalized = normalize_mail_config(config)
+        self.strategy = normalized["mail_strategy"]
+        self._provider_names = list(normalized["mail_providers"])
+        self._provider_configs = copy.deepcopy(normalized["mail_provider_configs"])
+        self._failures = {name: 0 for name in self._provider_names}
+        self._lock = threading.RLock()
+        self._counter = itertools.count()
+
+        if not self._provider_names:
+            raise RuntimeError("无可用邮箱提供商")
+
+    def next_mailbox(self, proxy: str = None) -> tuple[str, BaseMailbox]:
+        with self._lock:
+            if not self._provider_names:
+                raise RuntimeError("无可用邮箱提供商")
+            if self.strategy == "random":
+                provider = random.choice(self._provider_names)
+            elif self.strategy == "failover":
+                provider = min(self._provider_names, key=lambda name: self._failures.get(name, 0))
+            else:
+                idx = next(self._counter) % len(self._provider_names)
+                provider = self._provider_names[idx]
+            mailbox = create_mailbox(provider, self._provider_configs.get(provider, {}), proxy=proxy)
+            return provider, mailbox
+
+    def providers(self, proxy: str = None) -> list[tuple[str, BaseMailbox]]:
+        with self._lock:
+            return [
+                (provider, create_mailbox(provider, self._provider_configs.get(provider, {}), proxy=proxy))
+                for provider in self._provider_names
+            ]
+
+    def report_success(self, provider_name: str) -> None:
+        with self._lock:
+            self._failures[provider_name] = max(0, self._failures.get(provider_name, 0) - 1)
+
+    def report_failure(self, provider_name: str) -> None:
+        with self._lock:
+            self._failures[provider_name] = self._failures.get(provider_name, 0) + 1
+
 
 def create_mailbox(provider: str, extra: dict = None, proxy: str = None) -> 'BaseMailbox':
     """工厂方法：根据 provider 创建对应的 mailbox 实例"""
     extra = extra or {}
     if provider == "tempmail_lol":
-        return TempMailLolMailbox(proxy=proxy)
+        return TempMailLolMailbox(
+            api_url=extra.get("api_url") or extra.get("tempmail_api_url", "https://api.tempmail.lol/v2"),
+            proxy=proxy,
+        )
     elif provider == "duckmail":
         return DuckMailMailbox(
-            api_url=extra.get("duckmail_api_url", "https://www.duckmail.sbs"),
-            provider_url=extra.get("duckmail_provider_url", "https://api.duckmail.sbs"),
-            bearer=extra.get("duckmail_bearer", "kevin273945"),
+            api_url=extra.get("api_url") or extra.get("duckmail_api_url", "https://api.duckmail.sbs"),
+            provider_url=extra.get("provider_url") or extra.get("duckmail_provider_url", ""),
+            bearer=extra.get("bearer_token") or extra.get("bearer") or extra.get("duckmail_bearer", ""),
             proxy=proxy,
         )
     elif provider == "freemail":
         return FreemailMailbox(
-            api_url=extra.get("freemail_api_url", ""),
-            admin_token=extra.get("freemail_admin_token", ""),
-            username=extra.get("freemail_username", ""),
-            password=extra.get("freemail_password", ""),
+            api_url=extra.get("api_url") or extra.get("freemail_api_url", ""),
+            admin_token=extra.get("admin_token") or extra.get("api_key") or extra.get("freemail_admin_token", ""),
+            username=extra.get("username") or extra.get("freemail_username", ""),
+            password=extra.get("password") or extra.get("freemail_password", ""),
             proxy=proxy,
         )
     elif provider == "moemail":
         return MoeMailMailbox(
-            api_url=extra.get("moemail_api_url", "https://sall.cc"),
+            api_url=extra.get("api_url") or extra.get("moemail_api_url", "https://sall.cc"),
             proxy=proxy,
         )
     elif provider == "cfworker":
         return CFWorkerMailbox(
-            api_url=extra.get("cfworker_api_url", ""),
-            admin_token=extra.get("cfworker_admin_token", ""),
-            domain=extra.get("cfworker_domain", ""),
-            fingerprint=extra.get("cfworker_fingerprint", ""),
+            api_url=extra.get("api_url") or extra.get("cfworker_api_url", ""),
+            admin_token=extra.get("admin_token") or extra.get("cfworker_admin_token", ""),
+            domain=extra.get("domain") or extra.get("cfworker_domain", ""),
+            fingerprint=extra.get("fingerprint") or extra.get("cfworker_fingerprint", ""),
             proxy=proxy,
         )
     else:  # laoudo
         return LaoudoMailbox(
-            auth_token=extra.get("laoudo_auth", ""),
-            email=extra.get("laoudo_email", ""),
-            account_id=extra.get("laoudo_account_id", ""),
+            auth_token=extra.get("auth_token") or extra.get("laoudo_auth", ""),
+            email=extra.get("email") or extra.get("laoudo_email", ""),
+            account_id=extra.get("account_id") or extra.get("laoudo_account_id", ""),
         )
 
 
@@ -188,8 +437,8 @@ class AitreMailbox(BaseMailbox):
 class TempMailLolMailbox(BaseMailbox):
     """tempmail.lol 免费临时邮箱（无需注册，自动生成）"""
 
-    def __init__(self, proxy: str = None):
-        self.api = "https://api.tempmail.lol/v2"
+    def __init__(self, api_url: str = "https://api.tempmail.lol/v2", proxy: str = None):
+        self.api = api_url.rstrip("/")
         self.proxy = {"http": proxy, "https": proxy} if proxy else None
         self._token = None
         self._email = None
@@ -199,9 +448,16 @@ class TempMailLolMailbox(BaseMailbox):
         r = requests.post(f"{self.api}/inbox/create",
             json={},
             proxies=self.proxy, timeout=15)
+        r.raise_for_status()
         data = r.json()
         self._email = data.get("address") or data.get("email", "")
         self._token = data.get("token", "")
+        if not self._email:
+            payload_preview = json.dumps(data, ensure_ascii=False)[:300]
+            raise RuntimeError(f"tempmail.lol 未返回邮箱地址: {payload_preview}")
+        if not self._token:
+            payload_preview = json.dumps(data, ensure_ascii=False)[:300]
+            raise RuntimeError(f"tempmail.lol 未返回 token: {payload_preview}")
         return MailboxAccount(email=self._email, account_id=self._token)
 
     def get_current_ids(self, account: MailboxAccount) -> set:
@@ -244,16 +500,17 @@ class TempMailLolMailbox(BaseMailbox):
 class DuckMailMailbox(BaseMailbox):
     """DuckMail 自动生成邮箱（随机创建账号）"""
 
-    def __init__(self, api_url: str = "https://www.duckmail.sbs",
-                 provider_url: str = "https://api.duckmail.sbs",
-                 bearer: str = "kevin273945",
+    def __init__(self, api_url: str = "https://api.duckmail.sbs",
+                 provider_url: str = "",
+                 bearer: str = "",
                  proxy: str = None):
         self.api = api_url.rstrip("/")
-        self.provider_url = provider_url
-        self.bearer = bearer
+        self.provider_url = provider_url.rstrip("/") if provider_url else ""
+        self.bearer = bearer.strip()
         self.proxy = {"http": proxy, "https": proxy} if proxy else None
         self._token = None
         self._address = None
+        self._legacy_mode = bool(self.provider_url and self.bearer)
 
     def _common_headers(self) -> dict:
         return {
@@ -262,59 +519,160 @@ class DuckMailMailbox(BaseMailbox):
             "x-api-provider-base-url": self.provider_url,
         }
 
+    def _json_or_raise(self, response, action: str) -> dict:
+        response.raise_for_status()
+        try:
+            return response.json()
+        except Exception:
+            body = response.text[:300]
+            raise RuntimeError(f"{action} 返回非 JSON: HTTP {response.status_code} {body}")
+
+    def _pick_domain(self) -> str:
+        import requests
+        if self._legacy_mode:
+            provider_host = self.provider_url.replace("https://api.", "").replace("https://", "")
+            return provider_host
+
+        r = requests.get(
+            f"{self.api}/domains",
+            proxies=self.proxy,
+            timeout=15,
+        )
+        data = self._json_or_raise(r, "DuckMail 获取域名")
+        domains = data.get("hydra:member", []) if isinstance(data, dict) else []
+        for item in domains:
+            if isinstance(item, dict) and item.get("domain") and item.get("isActive", True):
+                return str(item["domain"]).strip()
+        payload_preview = json.dumps(data, ensure_ascii=False)[:300]
+        raise RuntimeError(f"DuckMail 未返回可用域名: {payload_preview}")
+
+    def _get_messages(self, token: str) -> list:
+        import requests
+        if self._legacy_mode:
+            r = requests.get(
+                f"{self.api}/api/mail?endpoint=%2Fmessages%3Fpage%3D1",
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "x-api-provider-base-url": self.provider_url,
+                },
+                proxies=self.proxy,
+                timeout=10,
+            )
+            data = self._json_or_raise(r, "DuckMail 获取消息列表")
+            return data.get("hydra:member", []) if isinstance(data, dict) else []
+
+        r = requests.get(
+            f"{self.api}/messages",
+            headers={"authorization": f"Bearer {token}"},
+            proxies=self.proxy,
+            timeout=10,
+        )
+        data = self._json_or_raise(r, "DuckMail 获取消息列表")
+        return data.get("hydra:member", []) if isinstance(data, dict) else []
+
+    def _get_message_detail(self, token: str, message_id: str) -> dict:
+        import requests
+        if self._legacy_mode:
+            r = requests.get(
+                f"{self.api}/api/mail?endpoint=%2Fmessages%2F{message_id}",
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "x-api-provider-base-url": self.provider_url,
+                },
+                proxies=self.proxy,
+                timeout=10,
+            )
+            return self._json_or_raise(r, "DuckMail 获取消息详情")
+
+        r = requests.get(
+            f"{self.api}/messages/{message_id}",
+            headers={"authorization": f"Bearer {token}"},
+            proxies=self.proxy,
+            timeout=10,
+        )
+        return self._json_or_raise(r, "DuckMail 获取消息详情")
+
     def get_email(self) -> MailboxAccount:
         import requests, random, string
         username = "".join(random.choices(string.ascii_lowercase + string.digits, k=10))
         password = "Test" + "".join(random.choices(string.digits, k=8)) + "!"
-        domain = self.provider_url.replace("https://api.", "").replace("https://", "")
+        domain = self._pick_domain()
         address = f"{username}@{domain}"
-        # 创建账号
-        r = requests.post(f"{self.api}/api/mail?endpoint=%2Faccounts",
-            json={"address": address, "password": password},
-            headers=self._common_headers(), proxies=self.proxy, timeout=15)
-        data = r.json()
-        self._address = data.get("address", address)
-        # 登录获取 token
-        r2 = requests.post(f"{self.api}/api/mail?endpoint=%2Ftoken",
-            json={"address": self._address, "password": password},
-            headers=self._common_headers(), proxies=self.proxy, timeout=15)
-        self._token = r2.json().get("token", "")
+        create_url = f"{self.api}/api/mail?endpoint=%2Faccounts" if self._legacy_mode else f"{self.api}/accounts"
+        token_url = f"{self.api}/api/mail?endpoint=%2Ftoken" if self._legacy_mode else f"{self.api}/token"
+        print(f"[DuckMail] provider: duckmail")
+        print(f"[DuckMail] API URL: {create_url}")
+        print(f"[DuckMail] 创建账户地址: {address}")
+        if self._legacy_mode:
+            r = requests.post(
+                create_url,
+                json={"address": address, "password": password},
+                headers=self._common_headers(),
+                proxies=self.proxy,
+                timeout=15,
+            )
+        else:
+            r = requests.post(
+                create_url,
+                json={"address": address, "password": password},
+                proxies=self.proxy,
+                timeout=15,
+            )
+        data = self._json_or_raise(r, "DuckMail 创建账户")
+        self._address = str(data.get("address") or address).strip()
+        if not self._address:
+            payload_preview = json.dumps(data, ensure_ascii=False)[:300]
+            raise RuntimeError(f"DuckMail 未返回邮箱地址: {payload_preview}")
+
+        if self._legacy_mode:
+            print(f"[DuckMail] Token API URL: {token_url}")
+            print(f"[DuckMail] 获取 token 邮箱地址: {self._address}")
+            r2 = requests.post(
+                token_url,
+                json={"address": self._address, "password": password},
+                headers=self._common_headers(),
+                proxies=self.proxy,
+                timeout=15,
+            )
+        else:
+            print(f"[DuckMail] Token API URL: {token_url}")
+            print(f"[DuckMail] 获取 token 邮箱地址: {self._address}")
+            r2 = requests.post(
+                token_url,
+                json={"address": self._address, "password": password},
+                proxies=self.proxy,
+                timeout=15,
+            )
+        token_data = self._json_or_raise(r2, "DuckMail 获取 token")
+        self._token = str(token_data.get("token") or "").strip()
+        if not self._token:
+            payload_preview = json.dumps(token_data, ensure_ascii=False)[:300]
+            raise RuntimeError(f"DuckMail 未返回 token: {payload_preview}")
         return MailboxAccount(email=self._address, account_id=self._token)
 
     def get_current_ids(self, account: MailboxAccount) -> set:
-        import requests
         try:
-            r = requests.get(f"{self.api}/api/mail?endpoint=%2Fmessages%3Fpage%3D1",
-                headers={"authorization": f"Bearer {account.account_id}",
-                         "x-api-provider-base-url": self.provider_url},
-                proxies=self.proxy, timeout=10)
-            return {str(m["id"]) for m in r.json().get("hydra:member", [])}
+            msgs = self._get_messages(account.account_id)
+            return {str(m.get("id")) for m in msgs if m.get("id")}
         except Exception:
             return set()
 
     def wait_for_code(self, account: MailboxAccount, keyword: str = "",
                       timeout: int = 120, before_ids: set = None, code_pattern: str = None) -> str:
-        import re, time, requests
+        import re, time
         seen = set(before_ids or [])
         start = time.time()
         while time.time() - start < timeout:
             try:
-                r = requests.get(f"{self.api}/api/mail?endpoint=%2Fmessages%3Fpage%3D1",
-                    headers={"authorization": f"Bearer {account.account_id}",
-                             "x-api-provider-base-url": self.provider_url},
-                    proxies=self.proxy, timeout=10)
-                msgs = r.json().get("hydra:member", [])
+                msgs = self._get_messages(account.account_id)
                 for msg in msgs:
                     mid = str(msg.get("id") or msg.get("msgid") or "")
-                    if mid in seen: continue
+                    if not mid or mid in seen:
+                        continue
                     seen.add(mid)
                     # 请求邮件详情获取完整 text
                     try:
-                        r2 = requests.get(f"{self.api}/api/mail?endpoint=%2Fmessages%2F{mid}",
-                            headers={"authorization": f"Bearer {account.account_id}",
-                                     "x-api-provider-base-url": self.provider_url},
-                            proxies=self.proxy, timeout=10)
-                        detail = r2.json()
+                        detail = self._get_message_detail(account.account_id, mid)
                         body = str(detail.get("text") or "") + " " + str(detail.get("subject") or "")
                     except Exception:
                         body = str(msg.get("subject") or "")
@@ -458,7 +816,9 @@ class MoeMailMailbox(BaseMailbox):
     def get_email(self) -> MailboxAccount:
         # 每次调用都重新注册新账号，保证邮箱唯一
         self._session_token = None
-        self._register_and_login()
+        session_token = self._register_and_login()
+        if not session_token:
+            raise RuntimeError("MoeMail 注册/登录失败，未获取到 session token")
         import random, string
         name = "".join(random.choices(string.ascii_letters + string.digits, k=8))
         # 获取可用域名列表，随机选一个
@@ -473,14 +833,18 @@ class MoeMailMailbox(BaseMailbox):
         r = self._session.post(f"{self.api}/api/emails/generate",
             json={"name": name, "domain": domain, "expiryTime": 86400000},
             timeout=15)
+        r.raise_for_status()
         data = r.json()
         self._email = data.get("email", data.get("address", ""))
         email_id = data.get("id", "")
         print(f"[MoeMail] 生成邮箱: {self._email} id={email_id} domain={domain} status={r.status_code}")
+        if not self._email:
+            payload_preview = json.dumps(data, ensure_ascii=False)[:300]
+            raise RuntimeError(f"MoeMail 未返回邮箱地址: {payload_preview}")
         if not email_id:
-            print(f"[MoeMail] 生成失败: {data}")
-        if email_id:
-            self._email_count = getattr(self, '_email_count', 0) + 1
+            payload_preview = json.dumps(data, ensure_ascii=False)[:300]
+            raise RuntimeError(f"MoeMail 未返回邮箱 ID: {payload_preview}")
+        self._email_count = getattr(self, '_email_count', 0) + 1
         return MailboxAccount(email=self._email, account_id=str(email_id))
 
     def get_current_ids(self, account: MailboxAccount) -> set:

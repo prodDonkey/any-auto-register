@@ -137,6 +137,7 @@ class RegistrationEngine:
         self.logs: list = []
         self._otp_sent_at: Optional[float] = None  # OTP 发送时间戳
         self._is_existing_account: bool = False  # 是否为已注册账号（用于自动登录）
+        self._create_account_response: Optional[Dict[str, Any]] = None
 
     def _log(self, message: str, level: str = "info"):
         """记录日志"""
@@ -184,11 +185,12 @@ class RegistrationEngine:
             self._log(f"正在创建 {self.email_service.service_type.value} 邮箱...")
             self.email_info = self.email_service.create_email()
 
-            if not self.email_info or "email" not in self.email_info:
+            email_value = str((self.email_info or {}).get("email") or "").strip()
+            if not self.email_info or not email_value:
                 self._log("创建邮箱失败: 返回信息不完整", "error")
                 return False
 
-            self.email = self.email_info["email"]
+            self.email = email_value
             self._log(f"成功创建邮箱: {self.email}")
             return True
 
@@ -270,6 +272,7 @@ class RegistrationEngine:
         """
         try:
             signup_body = f'{{"username":{{"value":"{self.email}","kind":"email"}},"screen_hint":"signup"}}'
+            self._log(f"提交注册表单邮箱: {self.email!r}")
 
             headers = {
                 "referer": "https://auth.openai.com/create-account",
@@ -490,15 +493,86 @@ class RegistrationEngine:
                 self._log(f"账户创建失败: {response.text[:200]}", "warning")
                 return False
 
+            try:
+                self._create_account_response = response.json()
+                if isinstance(self._create_account_response, dict):
+                    self._log(
+                        f"create_account 响应字段: {', '.join(sorted(self._create_account_response.keys())) or '(empty)'}"
+                    )
+            except Exception:
+                self._create_account_response = None
+                self._log(f"create_account 响应非 JSON: {response.text[:200]}", "warning")
+
             return True
 
         except Exception as e:
             self._log(f"创建账户失败: {e}", "error")
             return False
 
+    def _extract_workspace_id(self, data: Any) -> Optional[str]:
+        """从嵌套响应结构中提取 workspace_id。"""
+        if isinstance(data, dict):
+            for key in ("workspace_id", "workspaceId", "default_workspace_id", "defaultWorkspaceId"):
+                value = str(data.get(key) or "").strip()
+                if value:
+                    return value
+
+            workspace = data.get("workspace")
+            if isinstance(workspace, dict):
+                value = str(workspace.get("id") or "").strip()
+                if value:
+                    return value
+
+            workspaces = data.get("workspaces")
+            if isinstance(workspaces, list):
+                for item in workspaces:
+                    if isinstance(item, dict):
+                        value = str(item.get("id") or "").strip()
+                        if value:
+                            return value
+
+            for value in data.values():
+                found = self._extract_workspace_id(value)
+                if found:
+                    return found
+
+        elif isinstance(data, list):
+            for item in data:
+                found = self._extract_workspace_id(item)
+                if found:
+                    return found
+
+        return None
+
+    def _extract_continue_url(self, data: Any) -> Optional[str]:
+        """从响应结构中提取 OAuth 继续跳转链接。"""
+        if isinstance(data, dict):
+            for key in ("continue_url", "continueUrl", "redirect_url", "redirectUrl"):
+                value = str(data.get(key) or "").strip()
+                if value:
+                    return value
+
+            for value in data.values():
+                found = self._extract_continue_url(value)
+                if found:
+                    return found
+
+        elif isinstance(data, list):
+            for item in data:
+                found = self._extract_continue_url(item)
+                if found:
+                    return found
+
+        return None
+
     def _get_workspace_id(self) -> Optional[str]:
         """获取 Workspace ID"""
         try:
+            response_workspace_id = self._extract_workspace_id(self._create_account_response)
+            if response_workspace_id:
+                self._log(f"从 create_account 响应获取到 Workspace ID: {response_workspace_id}")
+                return response_workspace_id
+
             auth_cookie = self.session.cookies.get("oai-client-auth-session")
             if not auth_cookie:
                 self._log("未能获取到授权 Cookie", "error")
@@ -519,15 +593,14 @@ class RegistrationEngine:
                 pad = "=" * ((4 - (len(payload) % 4)) % 4)
                 decoded = base64.urlsafe_b64decode((payload + pad).encode("ascii"))
                 auth_json = json_module.loads(decoded.decode("utf-8"))
+                if isinstance(auth_json, dict):
+                    self._log(
+                        f"授权 Cookie 字段: {', '.join(sorted(auth_json.keys())) or '(empty)'}"
+                    )
 
-                workspaces = auth_json.get("workspaces") or []
-                if not workspaces:
-                    self._log("授权 Cookie 里没有 workspace 信息", "error")
-                    return None
-
-                workspace_id = str((workspaces[0] or {}).get("id") or "").strip()
+                workspace_id = self._extract_workspace_id(auth_json)
                 if not workspace_id:
-                    self._log("无法解析 workspace_id", "error")
+                    self._log("授权 Cookie 里没有 workspace 信息", "error")
                     return None
 
                 self._log(f"Workspace ID: {workspace_id}")
@@ -751,21 +824,26 @@ class RegistrationEngine:
                     result.error_message = "创建用户账户失败"
                     return result
 
-            # 13. 获取 Workspace ID
-            self._log("13. 获取 Workspace ID...")
-            workspace_id = self._get_workspace_id()
-            if not workspace_id:
-                result.error_message = "获取 Workspace ID 失败"
-                return result
+            # 13. 获取后续授权入口
+            self._log("13. 获取后续授权入口...")
+            continue_url = self._extract_continue_url(self._create_account_response)
+            if continue_url:
+                self._log("从 create_account 响应获取到 continue_url")
+            else:
+                self._log("create_account 响应里没有 continue_url，回退到 workspace 流程")
+                workspace_id = self._get_workspace_id()
+                if not workspace_id:
+                    result.error_message = "获取 Workspace ID 失败"
+                    return result
 
-            result.workspace_id = workspace_id
+                result.workspace_id = workspace_id
 
-            # 14. 选择 Workspace
-            self._log("14. 选择 Workspace...")
-            continue_url = self._select_workspace(workspace_id)
-            if not continue_url:
-                result.error_message = "选择 Workspace 失败"
-                return result
+                # 14. 选择 Workspace
+                self._log("14. 选择 Workspace...")
+                continue_url = self._select_workspace(workspace_id)
+                if not continue_url:
+                    result.error_message = "选择 Workspace 失败"
+                    return result
 
             # 15. 跟随重定向链
             self._log("15. 跟随重定向链...")

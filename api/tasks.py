@@ -168,7 +168,8 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
     from core.registry import get
     from core.base_platform import RegisterConfig
     from core.db import save_account
-    from core.base_mailbox import create_mailbox
+    from core.base_mailbox import MultiMailboxRouter, normalize_mail_config
+    from core.config_store import config_store
 
     with _tasks_lock:
         _tasks[task_id]["status"] = "running"
@@ -177,47 +178,72 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
 
     try:
         PlatformCls = get(req.platform)
+        stored_cfg = config_store.get_all()
+        request_extra = {k: v for k, v in (req.extra or {}).items() if v not in (None, "")}
+        effective_extra = dict(stored_cfg)
+        effective_extra.update(request_extra)
+
+        mail_keys = {
+            "mail_provider", "mail_providers", "mail_provider_configs", "mail_strategy",
+            "laoudo_auth", "laoudo_email", "laoudo_account_id",
+            "tempmail_api_url",
+            "duckmail_api_url", "duckmail_provider_url", "duckmail_bearer",
+            "freemail_api_url", "freemail_admin_token", "freemail_username", "freemail_password",
+            "moemail_api_url",
+            "cfworker_api_url", "cfworker_admin_token", "cfworker_domain", "cfworker_fingerprint",
+        }
+        stored_has_router = any(str(stored_cfg.get(key, "")).strip() for key in ("mail_providers", "mail_provider_configs", "mail_strategy"))
+        request_has_router = any(request_extra.get(key) not in (None, "", [], {}) for key in ("mail_providers", "mail_provider_configs", "mail_strategy"))
+        if request_has_router:
+            mail_cfg_source = dict(stored_cfg)
+            for key in mail_keys:
+                if key in request_extra:
+                    mail_cfg_source[key] = request_extra[key]
+        elif stored_has_router:
+            mail_cfg_source = dict(stored_cfg)
+        else:
+            mail_cfg_source = dict(stored_cfg)
+            for key in mail_keys:
+                if key in request_extra:
+                    mail_cfg_source[key] = request_extra[key]
+
+        normalized_mail_cfg = normalize_mail_config(mail_cfg_source)
+        effective_extra.update(normalized_mail_cfg)
+        mail_router = MultiMailboxRouter(effective_extra)
+
         config = RegisterConfig(
             executor_type=req.executor_type,
             captcha_solver=req.captcha_solver,
             proxy=req.proxy,
-            extra=req.extra,
-        )
-        mailbox = create_mailbox(
-            provider=req.extra.get("mail_provider", "laoudo"),
-            extra=req.extra,
-            proxy=req.proxy,
+            extra=effective_extra,
         )
         def _do_one(i: int):
             from core.proxy_pool import proxy_pool
             _proxy = req.proxy
             if not _proxy:
                 _proxy = proxy_pool.get_next()
+            provider_name, mailbox = mail_router.next_mailbox(proxy=_proxy)
+            attempt_extra = dict(effective_extra)
+            attempt_extra["mail_provider"] = provider_name
             _config = RegisterConfig(
                 executor_type=req.executor_type,
                 captcha_solver=req.captcha_solver,
                 proxy=_proxy,
-                extra=req.extra,
+                extra=attempt_extra,
             )
-            _mailbox = (
-                create_mailbox(
-                    provider=req.extra.get("mail_provider", "laoudo"),
-                    extra=req.extra,
-                    proxy=_proxy,
-                )
-                if req.concurrency > 1 else mailbox
-            )
-            _platform = PlatformCls(config=_config, mailbox=_mailbox)
+            _platform = PlatformCls(config=_config, mailbox=mailbox)
             _platform._log_fn = lambda msg: _log(task_id, msg)
             try:
                 with _tasks_lock:
                     _tasks[task_id]["progress"] = f"{i+1}/{req.count}"
                 _log(task_id, f"开始注册第 {i+1}/{req.count} 个账号")
                 if _proxy: _log(task_id, f"使用代理: {_proxy}")
+                _log(task_id, f"使用邮箱提供商: {provider_name}")
                 account = _platform.register(
                     email=req.email or None,
                     password=req.password,
                 )
+                mail_router.report_success(provider_name)
                 save_account(account)
                 _save_local_token_json(task_id, account)
                 if _proxy: proxy_pool.report_success(_proxy)
@@ -232,6 +258,7 @@ def _run_register(task_id: str, req: RegisterTaskRequest):
                         _tasks[task_id].setdefault("cashier_urls", []).append(cashier_url)
                 return True
             except Exception as e:
+                mail_router.report_failure(provider_name)
                 if _proxy: proxy_pool.report_fail(_proxy)
                 _log(task_id, f"✗ 注册失败: {e}")
                 _save_task_log(req.platform, req.email or "", "failed", error=str(e))

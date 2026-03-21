@@ -40,26 +40,38 @@ class ChatGPTPlatform(BasePlatform):
         from platforms.chatgpt.register import RegistrationEngine
         log_fn = getattr(self, '_log_fn', print)
 
-        if mail_provider == 'laoudo' and self.mailbox:
-            mail_acct = self.mailbox.get_email()
-            email = email or mail_acct.email
+        if self.mailbox:
             _mailbox = self.mailbox
-            _mail_acct = mail_acct
 
-            class LaoudoEmailService:
-                service_type = type('ST', (), {'value': 'laoudo'})()
+            class GenericMailboxEmailService:
+                service_type = type('ST', (), {'value': mail_provider})()
+
                 def create_email(self, config=None):
-                    return {'email': _mail_acct.email, 'service_id': _mail_acct.account_id, 'token': ''}
+                    acct = _mailbox.get_email()
+                    self._acct = acct
+                    return {
+                        'email': acct.email,
+                        'service_id': acct.account_id,
+                        'token': acct.account_id,
+                    }
+
                 def get_verification_code(self, email=None, email_id=None, timeout=120, pattern=None, otp_sent_at=None):
-                    return _mailbox.wait_for_code(_mail_acct, keyword="", timeout=timeout)
-                def update_status(self, success, error=None): pass
+                    return _mailbox.wait_for_code(self._acct, keyword="", timeout=timeout)
+
+                def update_status(self, success, error=None):
+                    pass
+
                 @property
-                def status(self): return None
+                def status(self):
+                    return None
 
             engine = RegistrationEngine(
-                email_service=LaoudoEmailService(),
-                proxy_url=proxy, callback_logger=log_fn)
-            engine.email = email
+                email_service=GenericMailboxEmailService(),
+                proxy_url=proxy,
+                callback_logger=log_fn,
+            )
+            if email:
+                engine.email = email
             engine.password = password
         else:
             from core.base_mailbox import TempMailLolMailbox
