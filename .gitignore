@@ -50,3 +50,5 @@ data/
 .idea/
 .vscode/
 *.swp
+
+midscene_run
