@@ -368,6 +368,7 @@ const [accounts, setAccounts] = useState<any[]>([])
   const [showAdd, setShowAdd] = useState(false)
   const [showRegister, setShowRegister] = useState(false)
   const [syncingSub2Api, setSyncingSub2Api] = useState(false)
+  const [exportingJson, setExportingJson] = useState(false)
   const [syncToast, setSyncToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   useEffect(() => {
@@ -433,6 +434,27 @@ const [accounts, setAccounts] = useState<any[]>([])
     }
   }
 
+  const exportCurrentPageJson = async () => {
+    if (accounts.length === 0 || exportingJson) return
+    setExportingJson(true)
+    try {
+      const data = await apiFetch('/accounts/export-json-local', {
+        method: 'POST',
+        body: JSON.stringify({ platform: tab, account_ids: accounts.map((acc) => acc.id) }),
+      })
+      setSyncToast({
+        type: data.ok ? 'success' : 'error',
+        text: data.ok
+          ? `已导出 ${data.count} 个 JSON 到 ${data.dir}`
+          : (data.message || 'JSON 导出失败'),
+      })
+    } catch (e: any) {
+      setSyncToast({ type: 'error', text: e?.message || 'JSON 导出失败' })
+    } finally {
+      setExportingJson(false)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {syncToast && (
@@ -479,6 +501,17 @@ const [accounts, setAccounts] = useState<any[]>([])
             >
               <Server className="h-4 w-4 mr-1" />
               {syncingSub2Api ? '同步中...' : '同步Sub2Api'}
+            </Button>
+          )}
+          {tab === 'kiro' && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportCurrentPageJson}
+              disabled={accounts.length === 0 || exportingJson}
+            >
+              <Download className="h-4 w-4 mr-1" />
+              {exportingJson ? '导出中...' : '导出JSON'}
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => setShowImport(true)}><Upload className="h-4 w-4 mr-1" />导入</Button>

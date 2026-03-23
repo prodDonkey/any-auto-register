@@ -5,11 +5,13 @@ from pydantic import BaseModel
 from core.db import AccountModel, get_session
 from typing import Optional
 from datetime import datetime, timezone
+from pathlib import Path
 import io, csv, json, logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
+TOKEN_EXPORT_DIR = Path(__file__).resolve().parent.parent / "data" / "tokens"
 
 
 class AccountCreate(BaseModel):
@@ -30,6 +32,11 @@ class AccountUpdate(BaseModel):
 class ImportRequest(BaseModel):
     platform: str
     lines: list[str]
+
+
+class ExportJsonRequest(BaseModel):
+    platform: Optional[str] = None
+    account_ids: list[int] = []
 
 
 @router.get("")
@@ -108,6 +115,89 @@ def export_accounts(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=accounts.csv"}
     )
+
+
+def _safe_export_name(text: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in (".", "@", "-", "_") else "_" for ch in text)
+
+
+def _account_json_payload(acc: AccountModel) -> dict:
+    extra = acc.get_extra()
+    if acc.platform == "kiro":
+        return {
+            "type": "kiro",
+            "email": acc.email,
+            "expired": str(extra.get("expiresAt") or ""),
+            "id_token": "",
+            "account_id": acc.user_id or "",
+            "access_token": str(extra.get("accessToken") or acc.token or ""),
+            "session_token": str(extra.get("sessionToken") or ""),
+            "client_id": str(extra.get("clientId") or ""),
+            "client_secret": str(extra.get("clientSecret") or ""),
+            "last_refresh": (acc.updated_at or acc.created_at).astimezone().isoformat(timespec="seconds"),
+            "refresh_token": str(extra.get("refreshToken") or ""),
+            "name": str(extra.get("name") or ""),
+        }
+    payload = {
+        "id": acc.id,
+        "platform": acc.platform,
+        "email": acc.email,
+        "password": acc.password,
+        "user_id": acc.user_id,
+        "region": acc.region,
+        "token": acc.token,
+        "status": acc.status,
+        "cashier_url": acc.cashier_url,
+        "created_at": acc.created_at.isoformat() if acc.created_at else "",
+        "updated_at": acc.updated_at.isoformat() if acc.updated_at else "",
+    }
+    if isinstance(extra, dict):
+        payload.update(extra)
+    return payload
+
+
+def _export_filename(acc: AccountModel) -> str:
+    stamp = (acc.updated_at or acc.created_at).astimezone().strftime("%Y%m%d-%H%M%S")
+    safe_email = _safe_export_name(acc.email or f"account_{acc.id}")
+    if acc.platform == "kiro":
+        return f"{stamp}-{safe_email}.json"
+    return f"{acc.platform}-{acc.id}-{safe_email}.json"
+
+
+@router.post("/export-json-local")
+def export_accounts_json_local(
+    body: ExportJsonRequest,
+    session: Session = Depends(get_session),
+):
+    q = select(AccountModel)
+    if body.platform:
+        q = q.where(AccountModel.platform == body.platform)
+    if body.account_ids:
+        q = q.where(AccountModel.id.in_(body.account_ids))
+    accounts = session.exec(q).all()
+    if not accounts:
+        return {"ok": False, "message": "没有可导出的账号", "count": 0, "files": []}
+
+    TOKEN_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    files: list[str] = []
+    for acc in accounts:
+        target_dir = TOKEN_EXPORT_DIR / acc.platform
+        target_dir.mkdir(parents=True, exist_ok=True)
+        filename = _export_filename(acc)
+        output_path = target_dir / filename
+        output_path.write_text(
+            json.dumps(_account_json_payload(acc), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        files.append(str(output_path))
+
+    return {
+        "ok": True,
+        "message": f"已导出 {len(files)} 个 JSON 文件",
+        "count": len(files),
+        "dir": str(TOKEN_EXPORT_DIR / (body.platform or "mixed")),
+        "files": files,
+    }
 
 
 @router.post("/import")
